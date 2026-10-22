@@ -1,0 +1,56 @@
+body {
+  background-color: var(--bs-tertiary-bg);
+}
+
+.user-box {
+  width: 13rem;
+}
+
+.item-row .item-qty {
+  width: 6rem;
+  flex: 0 0 auto;
+}
+
+.font-mono,
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.order-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .8rem;
+}
+
+.stock-bar {
+  height: .35rem;
+  width: 6rem;
+}
+
+.fact {
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  padding: .75rem 1rem;
+  height: 100%;
+}
+
+.fact .label {
+  font-size: .75rem;
+  color: var(--bs-secondary-color);
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+.fact .value {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.table td.actions {
+  white-space: nowrap;
+}
+
+@media (max-width: 575.98px) {
+  .user-box {
+    width: 100%;
+  }
+}

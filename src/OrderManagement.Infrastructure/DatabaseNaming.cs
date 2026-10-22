@@ -4,7 +4,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 namespace OrderManagement.Infrastructure;
 
 /// <summary>
-/// Applies the KALBE KIOS naming standard to the whole model so individual entity configurations
+/// Applies the database naming standard to the whole model so individual entity configurations
 /// do not have to repeat it:
 /// <list type="bullet">
 /// <item>Tables: <c>m</c> prefix for master data, <c>tr</c> for transactions (set per entity), e.g. <c>mProduct</c>, <c>trOrder</c>.</item>
@@ -52,10 +52,12 @@ public static class DatabaseNaming
     public static string Q(string identifier) => $"\"{identifier}\"";
 
     // "mProduct" -> "Product", "trOrderItem" -> "OrderItem"
-    private static string TableStem(string table) =>
-        table.StartsWith("tr") && char.IsUpper(table[2]) ? table[2..]
-        : table.StartsWith('m') && char.IsUpper(table[1]) ? table[1..]
-        : table;
+    private static string TableStem(string table)
+    {
+        if (table.StartsWith("tr") && char.IsUpper(table[2])) return table[2..];
+        if (table.StartsWith('m') && char.IsUpper(table[1])) return table[1..];
+        return table;
+    }
 
     private static string ColumnName(string tableStem, IMutableProperty property)
     {
@@ -66,9 +68,8 @@ public static class DatabaseNaming
 
         if (type == typeof(Guid))
         {
-            var stem = property.Name == "Id" ? tableStem
-                : property.Name.EndsWith("Id") ? property.Name[..^2]
-                : property.Name;
+            if (property.Name == "Id") return $"uid{tableStem}UUID";
+            var stem = property.Name.EndsWith("Id") ? property.Name[..^2] : property.Name;
             return $"uid{stem}UUID";
         }
 

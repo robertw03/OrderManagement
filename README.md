@@ -40,6 +40,7 @@ dotnet run --project src/OrderManagement.Api
 ```
 
 - Database `OrderManagement` dibuat dan di-migrate otomatis saat startup (environment Development), termasuk seed produk.
+- **UI demo**: <http://localhost:5155/> (lihat [§1.1](#11-ui-demo))
 - Dokumentasi interaktif (Scalar/OpenAPI): <http://localhost:5155/scalar>
 - Contoh request siap pakai: [`OrderManagement.http`](OrderManagement.http)
 - Health check: <http://localhost:5155/health>
@@ -61,6 +62,24 @@ dotnet test
 Integration test butuh PostgreSQL (lihat [§10](#10-testing)). Default memakai `Host=localhost;Port=5432;Username=postgres;Password=postgres`;
 override dengan environment variable `ORDERMGMT_TEST_CONNECTION`. Setiap test run membuat database sementara
 `OrderManagement_Test_<guid>` lalu menghapusnya kembali.
+
+### 1.1 UI Demo
+
+Halaman sederhana (Bootstrap 5 + JavaScript tanpa build step) di [`wwwroot`](src/OrderManagement.Api/wwwroot), disajikan
+oleh API yang sama dan **hanya memanggil REST API publik** — tidak ada logic bisnis di frontend.
+
+| Tab | Isi |
+|---|---|
+| **Orders** | Form buat order (multi item, estimasi total, Idempotency-Key otomatis), daftar order dengan filter status/customer/tanggal + pagination, detail order, tombol transisi status sesuai `allowedNextStatuses` dari API |
+| **Produk** | Stock per produk, auto refresh |
+| **Simulasi Concurrency** | Satu klik menjalankan Skenario A, B, dan C: request dikirim **bersamaan** dari browser, lalu hasilnya diverifikasi dan ditampilkan (status HTTP, error code, waktu, correlation ID tiap request) |
+
+Detail yang bisa didemokan:
+- Tombol *Submit* sengaja **tidak** di-disable: klik berkali-kali mengirim `Idempotency-Key` yang sama dan
+  muncul notifikasi "request duplikat terdeteksi" — tetap satu order.
+- Nama user di navbar dikirim sebagai `X-User-Id` dan tercatat di kolom audit (`txtInsertedBy`/`txtUpdatedBy`).
+- Setiap error menampilkan `correlationId` yang bisa langsung dicari di log server.
+- Endpoint pendukung demo (`POST /api/demo/reset`, `PUT /api/demo/products/{id}/stock`) **hanya ada di environment Development**.
 
 ### Schema SQL
 
@@ -92,7 +111,7 @@ Versi SQL murni (hasil `dotnet ef migrations script`) ada di [`db/schema.sql`](d
 - **SQLite tidak dipilih** karena write-nya diserialisasi per file database: test concurrency akan "lulus" tanpa
   membuktikan apa pun.
 - SQL Server sebenarnya juga valid (desainnya sama: `rowversion`, unique index, `UPDLOCK` bila perlu). PostgreSQL
-  dipilih karena open-source, ringan dijalankan di Docker, dan sama dengan stack database tim (KALBE KIOS).
+  dipilih karena open-source, ringan dijalankan di Docker, dan matang untuk beban OLTP.
 
 ---
 
@@ -106,6 +125,8 @@ src/
     Common/                        Error handling, correlation ID, validation filter, current user
     Features/Orders/               Controller, service, DTO, validator  (vertical slice per fitur)
     Features/Products/             Endpoint read-only produk (untuk melihat stock)
+    Features/Demo/                 Endpoint reset data demo (Development only)
+    wwwroot/                       UI demo (Bootstrap 5 + JS)
 tests/
   OrderManagement.UnitTests/       State machine, validator, request hash, standar database
   OrderManagement.IntegrationTests/  API end-to-end + skenario concurrency di PostgreSQL asli
@@ -121,7 +142,7 @@ ingin disembunyikan di balik repository generik.
 
 ## 4. Desain Database
 
-Mengikuti standar penamaan **KALBE KIOS**, diterapkan otomatis untuk seluruh model oleh
+Memakai standar penamaan berikut, diterapkan otomatis untuk seluruh model oleh
 [`DatabaseNaming`](src/OrderManagement.Infrastructure/DatabaseNaming.cs) dan dijaga oleh unit test
 [`DatabaseStandardTests`](tests/OrderManagement.UnitTests/DatabaseStandardTests.cs).
 
@@ -362,7 +383,7 @@ Contoh tracing satu request yang gagal:
 
 ## 10. Testing
 
-**71 test** (45 unit + 26 integrasi). Integration test menjalankan API sungguhan (`WebApplicationFactory`) terhadap
+**74 test** (45 unit + 29 integrasi). Integration test menjalankan API sungguhan (`WebApplicationFactory`) terhadap
 **PostgreSQL sungguhan** — concurrency bergantung pada locking database, sehingga provider in-memory/SQLite tidak
 akan membuktikan apa pun. Request concurrent dilepas bersamaan dengan *start gate* (`TaskCompletionSource`) agar
 benar-benar tumpang tindih di database.
@@ -403,6 +424,11 @@ Dokumentasi lengkap & interaktif: `/scalar` (OpenAPI di `/openapi/v1.json`). Hea
 | `POST` | `/api/orders/{id}/cancel` | Cancel (hanya Pending/Confirmed) + kembalikan stock. Body opsional `{ "expectedVersion": 2 }` |
 | `GET` | `/api/products`, `/api/products/{id}` | Lihat produk & stock |
 | `GET` | `/health` | Health check (termasuk koneksi database) |
+| `POST` | `/api/demo/reset` | *Development only* — hapus semua order, kembalikan stock awal |
+| `PUT` | `/api/demo/products/{id}/stock` | *Development only* — set stock produk (body `{ "stockQuantity": 15 }`) |
+
+Respons order menyertakan `allowedNextStatuses` (transisi yang sah dari status saat ini) sehingga client tidak perlu
+menduplikasi state machine.
 
 State machine:
 

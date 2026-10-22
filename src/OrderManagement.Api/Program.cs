@@ -7,6 +7,7 @@ using OrderManagement.Api.Common;
 using OrderManagement.Api.Common.Errors;
 using OrderManagement.Api.Common.Logging;
 using OrderManagement.Api.Common.Validation;
+using OrderManagement.Api.Features.Demo;
 using OrderManagement.Api.Features.Orders;
 using OrderManagement.Infrastructure;
 using Scalar.AspNetCore;
@@ -109,10 +110,15 @@ app.UseSerilogRequestLogging(options =>
 app.UseExceptionHandler();
 app.UseStatusCodePages();
 
+// Demo UI (wwwroot) — plain HTML/JS calling the same REST API.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
     app.MapScalarApiReference();
+    app.MapDemoEndpoints();
 }
 
 app.MapControllers();

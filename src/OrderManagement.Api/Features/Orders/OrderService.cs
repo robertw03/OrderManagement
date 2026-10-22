@@ -140,8 +140,10 @@ public sealed class OrderService(OrderDbContext db, ICurrentUser currentUser, Ti
             .ThenByDescending(o => o.Id)
             .Skip((query.Page - 1) * query.PageSize)
             .Take(query.PageSize)
+            // NextStatuses runs client-side; EF allows that in the final projection.
             .Select(o => new OrderSummaryResponse(
-                o.Id, o.CustomerId, o.Status, o.TotalAmount, o.Items.Count, o.Version, o.InsertedAt, o.UpdatedAt))
+                o.Id, o.CustomerId, o.Status, o.TotalAmount, o.Items.Count, o.Version, o.InsertedAt, o.UpdatedAt,
+                OrderStatusTransitions.NextStatuses(o.Status)))
             .ToListAsync(ct);
 
         var totalPages = (int)Math.Ceiling(totalCount / (double)query.PageSize);

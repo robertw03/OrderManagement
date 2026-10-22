@@ -4,7 +4,7 @@ using OrderManagement.Infrastructure;
 namespace OrderManagement.UnitTests;
 
 /// <summary>
-/// Guards the KALBE KIOS database standard: m/tr table prefixes, uid…UUID primary keys,
+/// Guards the database naming standard: m/tr table prefixes, uid…UUID primary keys,
 /// type-prefixed columns and the mandatory audit columns on every table.
 /// </summary>
 public sealed class DatabaseStandardTests

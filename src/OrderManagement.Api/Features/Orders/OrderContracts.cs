@@ -65,6 +65,7 @@ public sealed record OrderResponse(
     string CreatedBy,
     DateTimeOffset? UpdatedAt,
     string? UpdatedBy,
+    IReadOnlyList<OrderStatus> AllowedNextStatuses,
     IReadOnlyList<OrderItemResponse> Items)
 {
     public static OrderResponse From(Order order) => new(
@@ -78,6 +79,7 @@ public sealed record OrderResponse(
         order.InsertedBy,
         order.UpdatedAt,
         order.UpdatedBy,
+        OrderStatusTransitions.NextStatuses(order.Status),
         order.Items
             .OrderBy(i => i.ProductId)
             .Select(i => new OrderItemResponse(i.ProductId, i.ProductName, i.Quantity, i.UnitPrice, i.LineTotal))
@@ -92,7 +94,8 @@ public sealed record OrderSummaryResponse(
     int ItemCount,
     int Version,
     DateTimeOffset CreatedAt,
-    DateTimeOffset? UpdatedAt);
+    DateTimeOffset? UpdatedAt,
+    IReadOnlyList<OrderStatus> AllowedNextStatuses);
 
 public sealed record PagedResponse<T>(
     IReadOnlyList<T> Items,

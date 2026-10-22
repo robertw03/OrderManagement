@@ -243,6 +243,38 @@ public sealed class OrderApiTests(ApiFixture fixture) : IAsyncLifetime
         (await fixture.GetStockAsync(Indomie)).Should().Be(500);
     }
 
+    // ---------------- Demo UI ----------------
+
+    [Fact]
+    public async Task Root_serves_the_demo_ui()
+    {
+        var response = await _client.GetAsync("/");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        response.Content.Headers.ContentType!.MediaType.Should().Be("text/html");
+        (await response.Content.ReadAsStringAsync()).Should().Contain("Order Management");
+    }
+
+    [Fact]
+    public async Task Demo_reset_endpoint_is_not_exposed_outside_development()
+    {
+        var response = await _client.PostAsync("/api/demo/reset", null);
+
+        response.StatusCode.Should().NotBe(HttpStatusCode.NoContent);
+        await using var db = fixture.CreateDbContext();
+        (await db.Products.CountAsync()).Should().Be(SeedData.Products.Length);
+    }
+
+    [Fact]
+    public async Task Order_responses_list_the_statuses_it_can_move_to()
+    {
+        var order = await _client.CreateOrderAsync(Order("CUST-1", (Indomie, 1)));
+        order.AllowedNextStatuses.Should().Equal(OrderStatus.Confirmed, OrderStatus.Cancelled);
+
+        var page = await _client.GetFromJsonAsync<PagedResponse<OrderSummaryResponse>>("/api/orders", Json);
+        page!.Items.Single().AllowedNextStatuses.Should().Equal(OrderStatus.Confirmed, OrderStatus.Cancelled);
+    }
+
     // ---------------- Error contract ----------------
 
     [Theory]

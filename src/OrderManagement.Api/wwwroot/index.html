@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Order Management</title>
+  <script>
+    // Follow the OS light/dark preference before first paint.
+    document.documentElement.dataset.bsTheme =
+      window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <nav class="navbar navbar-expand-md border-bottom bg-body-tertiary sticky-top">
+    <div class="container-xl">
+      <a class="navbar-brand fw-semibold" href="#"><i class="bi bi-box-seam me-2 text-primary"></i>Order Management</a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav" aria-controls="nav" aria-expanded="false" aria-label="Menu">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="nav">
+        <ul class="nav nav-pills me-auto my-2 my-md-0" role="tablist">
+          <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#tab-orders" type="button" role="tab"><i class="bi bi-receipt me-1"></i>Orders</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-products" type="button" role="tab"><i class="bi bi-boxes me-1"></i>Produk</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-sim" type="button" role="tab"><i class="bi bi-lightning-charge me-1"></i>Simulasi Concurrency</button></li>
+        </ul>
+        <div class="d-flex align-items-center gap-2">
+          <div class="input-group input-group-sm user-box" title="Dikirim sebagai header X-User-Id dan tercatat di kolom audit">
+            <span class="input-group-text"><i class="bi bi-person-circle"></i></span>
+            <input id="user-name" class="form-control" placeholder="user" maxlength="100" aria-label="User">
+          </div>
+          <a class="btn btn-sm btn-outline-secondary text-nowrap" href="/scalar" target="_blank" rel="noopener"><i class="bi bi-book me-1"></i>API Docs</a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container-xl py-4">
+    <div class="tab-content">
+
+      <!-- ====================== ORDERS ====================== -->
+      <section class="tab-pane fade show active" id="tab-orders" role="tabpanel">
+        <div class="row g-4">
+          <div class="col-lg-4">
+            <div class="card shadow-sm">
+              <div class="card-header fw-semibold"><i class="bi bi-plus-circle me-1"></i>Buat Order</div>
+              <form id="order-form" class="card-body" novalidate>
+                <div class="mb-3">
+                  <label class="form-label" for="f-customer">Customer ID</label>
+                  <input id="f-customer" class="form-control" maxlength="64" value="CUST-001" required>
+                  <div class="invalid-feedback" data-field="customerId"></div>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label" for="f-address">Alamat Pengiriman</label>
+                  <textarea id="f-address" class="form-control" rows="2" maxlength="500" required>Jl. Asia Afrika No. 1, Bandung</textarea>
+                  <div class="invalid-feedback" data-field="shippingAddress"></div>
+                </div>
+                <label class="form-label">Item</label>
+                <div id="f-items" class="vstack gap-2 mb-2"></div>
+                <div class="invalid-feedback d-block" data-field="items"></div>
+                <button id="f-add-item" type="button" class="btn btn-sm btn-outline-primary mb-3"><i class="bi bi-plus"></i> Tambah item</button>
+
+                <div class="d-flex justify-content-between align-items-center border-top pt-3 mb-3">
+                  <span class="text-body-secondary">Estimasi total</span>
+                  <span id="f-total" class="fs-5 fw-semibold">Rp 0</span>
+                </div>
+
+                <div class="small text-body-secondary mb-3">
+                  <i class="bi bi-key me-1"></i>Idempotency-Key: <code id="f-key"></code>
+                  <button id="f-new-key" type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline">baru</button>
+                  <div class="form-text">Key yang sama dipakai ulang sampai order berhasil — klik Submit berkali-kali tetap menghasilkan satu order.</div>
+                </div>
+                <button id="f-submit" type="submit" class="btn btn-primary w-100"><i class="bi bi-send me-1"></i>Submit Order</button>
+              </form>
+            </div>
+          </div>
+
+          <div class="col-lg-8">
+            <div class="card shadow-sm">
+              <div class="card-header d-flex flex-wrap gap-2 align-items-center">
+                <span class="fw-semibold me-auto"><i class="bi bi-list-ul me-1"></i>Daftar Order</span>
+                <button id="o-refresh" class="btn btn-sm btn-outline-secondary" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+              </div>
+              <div class="card-body pb-0">
+                <form id="o-filter" class="row g-2 align-items-end">
+                  <div class="col-6 col-md-3">
+                    <label class="form-label small mb-1" for="o-status">Status</label>
+                    <select id="o-status" class="form-select form-select-sm">
+                      <option value="">Semua</option>
+                      <option>Pending</option><option>Confirmed</option><option>Shipped</option><option>Delivered</option><option>Cancelled</option>
+                    </select>
+                  </div>
+                  <div class="col-6 col-md-3">
+                    <label class="form-label small mb-1" for="o-customer">Customer</label>
+                    <input id="o-customer" class="form-control form-control-sm" placeholder="CUST-001">
+                  </div>
+                  <div class="col-6 col-md-2">
+                    <label class="form-label small mb-1" for="o-from">Dari</label>
+                    <input id="o-from" type="date" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-6 col-md-2">
+                    <label class="form-label small mb-1" for="o-to">Sampai</label>
+                    <input id="o-to" type="date" class="form-control form-control-sm">
+                  </div>
+                  <div class="col-12 col-md-2 d-flex gap-1">
+                    <button class="btn btn-sm btn-primary flex-fill" type="submit"><i class="bi bi-funnel"></i> Filter</button>
+                    <button class="btn btn-sm btn-outline-secondary" type="reset" id="o-clear" title="Reset filter"><i class="bi bi-x-lg"></i></button>
+                  </div>
+                </form>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0 mt-3">
+                  <thead>
+                    <tr><th>Order</th><th>Customer</th><th>Status</th><th class="text-end">Total</th><th class="d-none d-md-table-cell">Dibuat</th><th class="text-end">Aksi</th></tr>
+                  </thead>
+                  <tbody id="o-rows"></tbody>
+                </table>
+              </div>
+              <div class="card-footer d-flex flex-wrap gap-2 align-items-center">
+                <span id="o-summary" class="small text-body-secondary me-auto"></span>
+                <select id="o-page-size" class="form-select form-select-sm w-auto" aria-label="Ukuran halaman">
+                  <option>5</option><option selected>10</option><option>20</option><option>50</option>
+                </select>
+                <nav><ul id="o-pager" class="pagination pagination-sm mb-0"></ul></nav>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================== PRODUCTS ====================== -->
+      <section class="tab-pane fade" id="tab-products" role="tabpanel">
+        <div class="card shadow-sm">
+          <div class="card-header d-flex align-items-center gap-2">
+            <span class="fw-semibold me-auto"><i class="bi bi-boxes me-1"></i>Produk &amp; Stock</span>
+            <div class="form-check form-switch mb-0 small">
+              <input class="form-check-input" type="checkbox" id="p-auto" checked>
+              <label class="form-check-label" for="p-auto">Auto refresh</label>
+            </div>
+            <button id="p-refresh" class="btn btn-sm btn-outline-secondary" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+          <div class="table-responsive">
+            <table class="table align-middle mb-0">
+              <thead><tr><th>Produk</th><th class="text-end">Harga</th><th class="text-end">Stock</th><th>Status</th></tr></thead>
+              <tbody id="p-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ====================== SIMULATION ====================== -->
+      <section class="tab-pane fade" id="tab-sim" role="tabpanel">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+          <div class="me-auto">
+            <h2 class="h5 mb-1">Simulasi Skenario Concurrency</h2>
+            <p class="text-body-secondary small mb-0">Setiap tombol menembakkan beberapa request <strong>bersamaan</strong> ke API sungguhan, lalu memverifikasi hasilnya.</p>
+          </div>
+          <button id="sim-reset" class="btn btn-outline-danger btn-sm"><i class="bi bi-arrow-counterclockwise me-1"></i>Reset data demo</button>
+        </div>
+
+        <div class="row g-4">
+          <div class="col-lg-4">
+            <div class="card h-100 shadow-sm">
+              <div class="card-body">
+                <h3 class="h6"><span class="badge text-bg-primary me-1">A</span>Concurrent Stock Deduction</h3>
+                <p class="small text-body-secondary">Stock Product X di-set 15, lalu <strong>2 user</strong> order masing-masing <strong>10 unit</strong> bersamaan.
+                  Hanya satu boleh berhasil dan stock tidak boleh minus.</p>
+                <div class="input-group input-group-sm mb-3">
+                  <span class="input-group-text">Jumlah pembeli</span>
+                  <input id="sim-a-count" type="number" class="form-control" value="2" min="2" max="30">
+                  <span class="input-group-text">× 10 unit</span>
+                </div>
+                <button class="btn btn-primary btn-sm w-100" data-sim="a"><i class="bi bi-play-fill"></i> Jalankan</button>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="card h-100 shadow-sm">
+              <div class="card-body">
+                <h3 class="h6"><span class="badge text-bg-primary me-1">B</span>Concurrent Status Update</h3>
+                <p class="small text-body-secondary">Order dibuat dan di-Confirm, lalu <strong>admin 1 → Shipped</strong> dan <strong>admin 2 → Cancel</strong> bersamaan
+                  dengan version yang sama. Hanya satu menang, yang lain mendapat 409.</p>
+                <button class="btn btn-primary btn-sm w-100" data-sim="b"><i class="bi bi-play-fill"></i> Jalankan</button>
+              </div>
+            </div>
+          </div>
+          <div class="col-lg-4">
+            <div class="card h-100 shadow-sm">
+              <div class="card-body">
+                <h3 class="h6"><span class="badge text-bg-primary me-1">C</span>Idempotent Create Under Race</h3>
+                <p class="small text-body-secondary">Simulasi double-click: <strong>beberapa POST dengan Idempotency-Key sama</strong> dikirim bersamaan.
+                  Harus tetap hanya satu order dan stock dipotong sekali.</p>
+                <div class="input-group input-group-sm mb-3">
+                  <span class="input-group-text">Jumlah request</span>
+                  <input id="sim-c-count" type="number" class="form-control" value="5" min="2" max="30">
+                </div>
+                <button class="btn btn-primary btn-sm w-100" data-sim="c"><i class="bi bi-play-fill"></i> Jalankan</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="sim-result" class="card shadow-sm mt-4 d-none">
+          <div class="card-header d-flex align-items-center gap-2">
+            <span id="sim-title" class="fw-semibold me-auto"></span>
+            <span id="sim-verdict"></span>
+          </div>
+          <div class="card-body">
+            <div id="sim-facts" class="row g-3 mb-3"></div>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead><tr><th>#</th><th>Request</th><th>HTTP</th><th>Hasil</th><th class="text-end">ms</th><th class="d-none d-md-table-cell">Correlation ID</th></tr></thead>
+                <tbody id="sim-rows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Order detail -->
+  <div class="modal fade" id="detail-modal" tabindex="-1" aria-labelledby="detail-title" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title h5" id="detail-title">Detail Order</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+        </div>
+        <div class="modal-body" id="detail-body"></div>
+        <div class="modal-footer" id="detail-actions"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts"></div>
+
+  <template id="item-row">
+    <div class="d-flex gap-2 item-row">
+      <select class="form-select form-select-sm item-product" aria-label="Produk"></select>
+      <input type="number" class="form-control form-control-sm item-qty" min="1" max="10000" value="1" aria-label="Quantity">
+      <button type="button" class="btn btn-sm btn-outline-danger item-remove" title="Hapus item"><i class="bi bi-trash"></i></button>
+    </div>
+  </template>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
