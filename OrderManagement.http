@@ -1,0 +1,107 @@
+### Order Management API — contoh request
+### Jalankan API dulu: dotnet run --project src/OrderManagement.Api
+### Bisa dieksekusi langsung dari VS Code (REST Client) / Visual Studio / Rider.
+
+@baseUrl = http://localhost:5155
+@productX = a1000000-0000-4000-8000-000000000001
+@indomie = a1000000-0000-4000-8000-000000000002
+@aqua = a1000000-0000-4000-8000-000000000003
+
+### Lihat produk & stock
+GET {{baseUrl}}/api/products
+
+### Buat order (Idempotency-Key wajib, X-User-Id opsional untuk audit, X-Correlation-ID opsional)
+# @name createOrder
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+Idempotency-Key: order-demo-001
+X-User-Id: sales.budi
+X-Correlation-ID: demo-trace-001
+
+{
+  "customerId": "CUST-001",
+  "shippingAddress": "Jl. Asia Afrika No. 1, Bandung",
+  "items": [
+    { "productId": "{{indomie}}", "quantity": 2 },
+    { "productId": "{{aqua}}", "quantity": 1 }
+  ]
+}
+
+### Retry dengan key yang sama -> order yang sama, header Idempotent-Replayed: true, stock tidak terpotong lagi
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+Idempotency-Key: order-demo-001
+
+{
+  "customerId": "CUST-001",
+  "shippingAddress": "Jl. Asia Afrika No. 1, Bandung",
+  "items": [
+    { "productId": "{{indomie}}", "quantity": 2 },
+    { "productId": "{{aqua}}", "quantity": 1 }
+  ]
+}
+
+### Key sama, payload beda -> 422 IDEMPOTENCY_KEY_REUSED
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+Idempotency-Key: order-demo-001
+
+{
+  "customerId": "CUST-001",
+  "shippingAddress": "Alamat lain",
+  "items": [ { "productId": "{{indomie}}", "quantity": 99 } ]
+}
+
+### Stock tidak cukup -> 409 INSUFFICIENT_STOCK
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+Idempotency-Key: order-demo-002
+
+{
+  "customerId": "CUST-002",
+  "shippingAddress": "Jl. Braga No. 10, Bandung",
+  "items": [ { "productId": "{{productX}}", "quantity": 100 } ]
+}
+
+### Validasi -> 400 VALIDATION_FAILED
+POST {{baseUrl}}/api/orders
+Content-Type: application/json
+Idempotency-Key: order-demo-003
+
+{ "customerId": "", "items": [ { "productId": "{{indomie}}", "quantity": 0 } ] }
+
+### Detail order (ETag = version)
+GET {{baseUrl}}/api/orders/{{createOrder.response.body.$.id}}
+
+### List order dengan filter + pagination
+GET {{baseUrl}}/api/orders?customerId=CUST-001&status=Pending&from=2026-01-01T00:00:00Z&page=1&pageSize=20
+
+### Update status (optimistic lock via expectedVersion)
+PATCH {{baseUrl}}/api/orders/{{createOrder.response.body.$.id}}/status
+Content-Type: application/json
+X-User-Id: admin.sari
+
+{ "status": "Confirmed", "expectedVersion": 1 }
+
+### Version basi -> 409 VERSION_MISMATCH (bisa juga lewat header If-Match)
+PATCH {{baseUrl}}/api/orders/{{createOrder.response.body.$.id}}/status
+Content-Type: application/json
+If-Match: "1"
+
+{ "status": "Shipped" }
+
+### Transisi tidak valid -> 422 INVALID_STATUS_TRANSITION
+PATCH {{baseUrl}}/api/orders/{{createOrder.response.body.$.id}}/status
+Content-Type: application/json
+
+{ "status": "Delivered" }
+
+### Cancel -> stock dikembalikan
+POST {{baseUrl}}/api/orders/{{createOrder.response.body.$.id}}/cancel
+Content-Type: application/json
+X-User-Id: admin.sari
+
+{}
+
+### Health check
+GET {{baseUrl}}/health
