@@ -118,20 +118,22 @@ public sealed class OrderService(
         if (!request.ConfirmDuplicate)
             await EnsureNotRecentDuplicateAsync(customerId, idempotencyKey, requestHash, now, ct);
 
-        // Check-and-deduct in a single atomic statement per product (Scenario A). The row lock taken by
-        // the UPDATE serializes concurrent orders for the same product, and the WHERE clause is
-        // re-evaluated against the latest committed stock, so stock can never go below zero.
+        // ======================================================================================
+        // DEMO BRANCH — BROKEN ON PURPOSE. Do not merge.
+        // The classic read → check in C# → write pattern of the old system. Two concurrent requests
+        // both read stock 15, both pass "15 >= 10", and both write 15 - 10 = 5: one deduction is lost
+        // and stock is oversold. The concurrency tests for Scenario A must fail on this branch.
+        // See branch `main` for the atomic conditional UPDATE that fixes it.
+        // ======================================================================================
         foreach (var item in items)
         {
-            var deducted = await db.Products
-                .Where(p => p.Id == item.ProductId && p.IsActive && p.StockQuantity >= item.Quantity)
-                .ExecuteUpdateAsync(s => s
-                    .SetProperty(p => p.StockQuantity, p => p.StockQuantity - item.Quantity)
-                    .SetProperty(p => p.UpdatedAt, now)
-                    .SetProperty(p => p.UpdatedBy, user), ct);
-
-            if (deducted == 0)
+            var product = await db.Products.FirstOrDefaultAsync(p => p.Id == item.ProductId && p.IsActive, ct);
+            if (product is null || product.StockQuantity < item.Quantity)
                 throw await StockFailureAsync(item.ProductId, item.Quantity, ct);
+
+            // Stands in for real-world latency between the read and the write (network, other queries).
+            await Task.Delay(50, ct);
+            product.StockQuantity -= item.Quantity;
         }
 
         // Product rows are locked by this transaction now, so name/price cannot change before commit.
