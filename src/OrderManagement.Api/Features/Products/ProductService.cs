@@ -55,25 +55,26 @@ public sealed class ProductService(OrderDbContext db, ICurrentUser currentUser, 
     /// </summary>
     public async Task<ProductResponse> AdjustStockAsync(Guid id, AdjustStockRequest request, CancellationToken ct)
     {
-        var now = clock.GetUtcNow();
-        var user = currentUser.UserName;
-
-        var updated = await db.Products
-            .Where(p => p.Id == id && p.StockQuantity + request.Quantity >= 0)
-            .ExecuteUpdateAsync(s => s
-                .SetProperty(p => p.StockQuantity, p => p.StockQuantity + request.Quantity)
-                .SetProperty(p => p.UpdatedAt, now)
-                .SetProperty(p => p.UpdatedBy, user), ct);
-
-        if (updated == 0)
+        // ======================================================================================
+        // DEMO BRANCH — RACE CONDITION #8 LEFT UNFIXED ON PURPOSE. Do not merge.
+        // Read stock → compute the new absolute value in C# → write it back. Any order or adjustment that
+        // commits between the read and the write is silently overwritten (lost update), and the
+        // "not below zero" check runs on stale data.
+        // Fix on `main`: one atomic UPDATE ... SET stock = stock + @delta WHERE stock + @delta >= 0.
+        // ======================================================================================
+        var product = await db.Products.FirstOrDefaultAsync(p => p.Id == id, ct) ?? throw NotFound(id);
+        var newStock = product.StockQuantity + request.Quantity;
+        if (newStock < 0)
         {
-            var stock = await db.Products.Where(p => p.Id == id).Select(p => (int?)p.StockQuantity).FirstOrDefaultAsync(ct)
-                ?? throw NotFound(id);
             throw new ConflictException(ErrorCodes.InsufficientStock, "Insufficient stock",
-                    $"Cannot remove {-request.Quantity} unit(s): only {stock} in stock.")
+                    $"Cannot remove {-request.Quantity} unit(s): only {product.StockQuantity} in stock.")
                 .With("productId", id)
-                .With("available", stock);
+                .With("available", product.StockQuantity);
         }
+
+        await Task.Delay(50, ct); // stands in for real-world latency between the read and the write
+        product.StockQuantity = newStock;
+        await db.SaveChangesAsync(ct);
 
         logger.LogInformation("Stock of product {ProductId} adjusted by {Quantity} ({Reason})", id, request.Quantity, request.Reason ?? "-");
         return await GetAsync(id, ct);

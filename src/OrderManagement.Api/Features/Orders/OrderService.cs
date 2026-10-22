@@ -238,9 +238,31 @@ public sealed class OrderService(
         if (!OrderStatusTransitions.CanTransition(order.Status, newStatus))
             throw InvalidTransition(order, newStatus, viaCancelEndpoint);
 
-        await using var tx = await db.Database.BeginTransactionAsync(ct);
         var now = clock.GetUtcNow();
         var user = currentUser.UserName;
+
+        // ======================================================================================
+        // DEMO BRANCH — RACE CONDITION #1 LEFT UNFIXED ON PURPOSE. Do not merge.
+        // Stock is returned as soon as the order *looks* cancellable, committed on its own, BEFORE this
+        // request has won the status change. Ten concurrent cancels all see "Pending", all return the
+        // stock, and only one of them actually cancels the order → stock is inflated 10×.
+        // Fix on `main`: return stock inside the same transaction, only after the compare-and-swap won.
+        // ======================================================================================
+        if (newStatus == OrderStatus.Cancelled)
+        {
+            await Task.Delay(50, ct); // stands in for real-world latency between the check and the write
+            foreach (var item in order.Items.OrderBy(i => i.ProductId))
+            {
+                await db.Products.IgnoreQueryFilters()
+                    .Where(p => p.Id == item.ProductId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(p => p.StockQuantity, p => p.StockQuantity + item.Quantity)
+                        .SetProperty(p => p.UpdatedAt, now)
+                        .SetProperty(p => p.UpdatedBy, user), ct);
+            }
+        }
+
+        await using var tx = await db.Database.BeginTransactionAsync(ct);
 
         // Compare-and-swap on (status, version) — Scenario B. If another admin changed the order after we
         // read it, the row no longer matches and zero rows are updated. When two updates race, the second
@@ -270,22 +292,6 @@ public sealed class OrderService(
                     "Reload the order and try again.")
                 .With("currentStatus", current?.Status.ToString())
                 .With("currentVersion", current?.Version);
-        }
-
-        // Stock is restored only by the transaction that actually won the status change, so two
-        // concurrent cancels can never return the same stock twice. Query filters are ignored so stock
-        // still goes back to a product that was deactivated or soft-deleted in the meantime.
-        if (newStatus == OrderStatus.Cancelled)
-        {
-            foreach (var item in order.Items.OrderBy(i => i.ProductId))
-            {
-                await db.Products.IgnoreQueryFilters()
-                    .Where(p => p.Id == item.ProductId)
-                    .ExecuteUpdateAsync(s => s
-                        .SetProperty(p => p.StockQuantity, p => p.StockQuantity + item.Quantity)
-                        .SetProperty(p => p.UpdatedAt, now)
-                        .SetProperty(p => p.UpdatedBy, user), ct);
-            }
         }
 
         await tx.CommitAsync(ct);
