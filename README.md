@@ -293,9 +293,32 @@ Prinsip umum: **koordinasi dilakukan oleh database, bukan oleh `lock` di C#.** `
 di satu proses; begitu API di-*scale* ke beberapa instance, satu-satunya titik bersama adalah database.
 Semua transaksi memakai isolation default `READ COMMITTED`.
 
+**Ringkasan:**
+
+| Skenario | Akar masalah | Mekanisme pencegahan | Hasil untuk yang kalah | Test | Demo |
+|---|---|---|---|---|---|
+| **A** Stock | *Check-then-act*: cek stock dan pengurangan terpisah → dua request lolos cek dengan data yang sama | **Atomic conditional UPDATE** (`… WHERE stock >= qty`) + row lock + `CHECK (stock >= 0)` | `409 INSUFFICIENT_STOCK` | `ScenarioA_*` | Simulasi A; branch `demo/broken-stock` |
+| **B** Status | *Lost update*: dua admin membaca status yang sama lalu saling menimpa | **Optimistic concurrency**: *compare-and-swap* pada (status, version) | `409 CONCURRENT_MODIFICATION` / `VERSION_MISMATCH` | `ScenarioB_*` | Simulasi B; dua tab `admin` & `admin2` |
+| **C** Idempotent create | *Check-then-insert*: dua request sama-sama melihat "key belum ada" | **Unique index + `INSERT … ON CONFLICT DO NOTHING`** sebagai langkah pertama transaksi | `201` replay order yang sama | `ScenarioC_*` | Simulasi C |
+
 ### 6.1 Skenario A — Concurrent Stock Deduction
 
 > Dua user order 10 unit Product X, stock tinggal 15.
+
+**Mekanisme bug tanpa proteksi** (pola sistem lama: baca → cek di aplikasi → tulis):
+
+```
+waktu   Request 1 (10 unit)                Request 2 (10 unit)
+  t1    SELECT stock → 15
+  t2                                       SELECT stock → 15
+  t3    cek 15 >= 10 ✓                     cek 15 >= 10 ✓
+  t4    UPDATE stock = 15 - 10 = 5
+  t5                                       UPDATE stock = 15 - 10 = 5   ← menimpa (lost update)
+        hasil: 2 order sukses, 20 unit terjual dari stock 15, stock di DB "terlihat" 5
+```
+
+Bila pengurangannya relatif (`stock = stock - 10`) tapi cek tetap di aplikasi, hasilnya stock **−5**. Keduanya berakar
+sama: cek dan tulis tidak atomic. Dibuktikan oleh branch `demo/broken-stock` (lihat [§10](#10-testing)).
 
 **Solusi: atomic conditional UPDATE** (cek dan kurangi dalam satu statement):
 
@@ -318,7 +341,8 @@ PostgreSQL mengevaluasi ulang `WHERE` T2 terhadap stock terbaru (5 ≥ 10 → fa
 
 | Alternatif | Kenapa tidak dipilih |
 |---|---|
-| Read → cek di C# → `SaveChanges` | Klasik *lost update*: dua request membaca 15, sama-sama lolos cek → stock −5. Ini bug sistem lama. |
+| Read → cek di C# → `SaveChanges` | Klasik *lost update*: dua request membaca 15, sama-sama lolos cek → oversold (lihat timeline di atas). Ini bug sistem lama. |
+| `lock` / `SemaphoreSlim` di C# | Hanya berlaku di satu proses; dengan 2+ instance API (atau job lain yang mengubah stock) race tetap terjadi. |
 | Optimistic locking (version) di produk | Benar, tapi produk "hot" akan sering konflik → banyak retry. Atomic UPDATE tidak butuh retry sama sekali. |
 | `SELECT … FOR UPDATE` lalu update | Benar juga, tapi dua round-trip dan lock lebih lama; atomic UPDATE mencapai hal yang sama dalam satu statement. |
 | `SERIALIZABLE` isolation | Benar, tapi semua transaksi harus siap di-retry (serialization failure) dan throughput turun. |
@@ -326,6 +350,19 @@ PostgreSQL mengevaluasi ulang `WHERE` T2 terhadap stock terbaru (5 ≥ 10 → fa
 ### 6.2 Skenario B — Concurrent Status Update
 
 > Dua admin bersamaan: satu ubah ke Shipped, satu Cancel.
+
+**Mekanisme bug tanpa proteksi** (baca order → validasi transisi di aplikasi → `UPDATE … SET status`):
+
+```
+waktu   Admin 1 (→ Shipped)                Admin 2 (→ Cancelled)
+  t1    baca order: Confirmed
+  t2                                       baca order: Confirmed
+  t3    Confirmed → Shipped valid ✓        Confirmed → Cancelled valid ✓
+  t4    UPDATE status = 'Shipped'
+  t5                                       UPDATE status = 'Cancelled'; stock dikembalikan
+        hasil: barang sudah dikirim, tapi order tercatat Cancelled dan stock "kembali" ke gudang
+               — kedua admin sama-sama mendapat respons sukses
+```
 
 **Solusi: optimistic concurrency dengan *compare-and-swap* pada (status, version):**
 
@@ -343,13 +380,33 @@ WHERE "uidOrderUUID" = @id AND "txtStatus" = @statusYangDibaca AND "intVersion" 
 - Respons 409 menyertakan `currentStatus` dan `currentVersion` supaya UI bisa langsung menampilkan keadaan terbaru.
 - Stock hanya dikembalikan oleh transaksi yang **menang** (lihat §7).
 
-**Kenapa optimistic (bukan pessimistic)?** Konflik antar admin jarang terjadi, dan soal meminta "yang lain mendapat
-error yang jelas" — persis perilaku optimistic locking. Pessimistic lock membuat admin kedua menunggu lalu
-tetap harus divalidasi ulang, tanpa manfaat tambahan.
+Yang terjadi dengan proteksi: pada t5, `UPDATE` admin 2 menunggu row lock milik admin 1. Setelah admin 1 commit,
+PostgreSQL mengevaluasi ulang `WHERE` terhadap baris terbaru (status kini `Shipped`, version 3) → tidak cocok → 0 baris
+→ admin 2 mendapat `409` berisi `currentStatus: Shipped`, dan **stock tidak dikembalikan**.
+
+**Kenapa bukan alternatif lain?**
+
+| Alternatif | Kenapa tidak dipilih |
+|---|---|
+| Update biasa (*last write wins*) | Inilah bug-nya: yang terakhir menimpa, keduanya mendapat sukses. |
+| Pessimistic lock (`SELECT … FOR UPDATE`) | Benar, tetapi admin kedua hanya menunggu lalu tetap harus divalidasi ulang; soal justru meminta "yang lain mendapat error yang jelas" — perilaku alami optimistic locking. Konflik antar admin jarang, jadi tidak ada retry berlebih. |
+| EF Core `[ConcurrencyCheck]` + `SaveChanges` | Setara secara konsep (`intVersion` memang ditandai *concurrency token*). Dipilih `ExecuteUpdate` eksplisit agar kondisi status ikut di `WHERE` dan pengembalian stock jelas berada di transaksi yang sama. |
+| `xmin` PostgreSQL sebagai token | Efektif, tapi spesifik PostgreSQL dan bukan versi bisnis yang bisa dikirim client; `intVersion` portabel dan tampil di API/ETag. |
 
 ### 6.3 Skenario C — Idempotent Create Under Race
 
 > Dua `POST /orders` dengan key sama tiba bersamaan, sebelum salah satu commit.
+
+**Mekanisme bug tanpa proteksi** (cek key di aplikasi lalu insert):
+
+```
+waktu   Request 1 (key K)                  Request 2 (key K, double click)
+  t1    SELECT … WHERE key = K → kosong
+  t2                                       SELECT … WHERE key = K → kosong (R1 belum commit)
+  t3    kurangi stock, INSERT order #1
+  t4                                       kurangi stock, INSERT order #2
+        hasil: 2 order untuk satu niat, stock terpotong dua kali
+```
 
 Pola "SELECT dulu, kalau belum ada baru INSERT" **tidak aman** — keduanya melihat "belum ada". Solusinya:
 unique index `UX_trIdempotencyKey_txtCustomerId_txtIdempotencyKey` dan `INSERT … ON CONFLICT DO NOTHING` sebagai
@@ -361,6 +418,18 @@ unique index `UX_trIdempotencyKey_txtCustomerId_txtIdempotencyKey` dan `INSERT �
 4. Bila T1 justru rollback (mis. stock kurang) → insert T2 berhasil dan T2 diproses normal.
 
 Karena key di-*claim* **sebelum** stock dikurangi, request duplikat tidak pernah ikut mengunci/mengurangi stock.
+
+**Kenapa bukan alternatif lain?**
+
+| Alternatif | Kenapa tidak dipilih |
+|---|---|
+| SELECT key → kalau belum ada INSERT | Race seperti timeline di atas. |
+| Unique constraint di tabel `trOrder` (kolom key) | Konflik baru ketahuan saat INSERT order — **setelah** stock dipotong; request kedua bisa gagal `INSUFFICIENT_STOCK` alih-alih mendapat replay, dan sempat mengunci baris produk tanpa perlu. |
+| Lock di memori / Redis (`SETNX`) | Tambahan infrastruktur dan masalah konsistensi baru (lock lepas tapi transaksi DB gagal, atau sebaliknya). Unique index ada di transaksi yang sama dengan order, jadi atomic dengan sendirinya. |
+| Simpan key berstatus `InProgress` lalu commit terpisah | Butuh penanganan key yang "tergantung" bila proses mati di tengah; satu transaksi tidak punya masalah itu. |
+
+Untuk order identik yang dikirim dengan key **berbeda** (client membuat key baru per klik), lihat lapis ketiga di
+[§5.2](#52-deteksi-duplikat-isi-key-berbeda).
 
 ---
 
@@ -482,6 +551,10 @@ benar-benar tumpang tindih di database.
 [`ProductApiTests`](tests/OrderManagement.IntegrationTests/ProductApiTests.cs)): lifecycle status, cancel mengembalikan
 stock (lewat kedua endpoint), rollback order multi-item, replay idempotency (termasuk retry setelah gagal & validasi panjang key), filter + pagination, kolom audit,
 produk nonaktif/terhapus, CRUD produk, format error 400/404/409/422 dan correlation ID.
+
+**Bukti test menangkap bug:** branch `demo/broken-stock` mengganti atomic UPDATE dengan pola baca → cek → tulis.
+Di branch itu `ScenarioA_two_orders…` gagal (2 order sukses dari stock 15) dan `ScenarioA_under_heavy_contention…`
+gagal (40 order sukses dari stock 15); di `main` keduanya lulus. Lihat `DEMO-BROKEN-STOCK.md` di branch tersebut.
 
 **Duplikat isi** ([`DuplicateOrderTests`](tests/OrderManagement.IntegrationTests/DuplicateOrderTests.cs)): order identik dengan key
 baru ditahan `409` lalu bisa dikonfirmasi, retry dengan key sama + konfirmasi berhasil, isi/customer berbeda dan order
