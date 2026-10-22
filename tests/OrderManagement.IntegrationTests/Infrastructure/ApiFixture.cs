@@ -1,8 +1,12 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using OrderManagement.Api.Features.Auth;
 using OrderManagement.Infrastructure;
 
 namespace OrderManagement.IntegrationTests.Infrastructure;
@@ -20,6 +24,7 @@ public sealed class ApiFixture : IAsyncLifetime
 
     private readonly string _serverConnection;
     private readonly string _databaseName = $"OrderManagement_Test_{Guid.NewGuid():N}";
+    private readonly Dictionary<string, string> _tokens = new();
     private WebApplicationFactory<Program>? _factory;
 
     public ApiFixture()
@@ -46,19 +51,42 @@ public sealed class ApiFixture : IAsyncLifetime
             builder.UseSetting("ConnectionStrings:OrderDb", ConnectionString);
             builder.UseSetting("Database:MigrateOnStartup", "false");
             builder.UseSetting("Serilog:MinimumLevel:Default", "Warning");
+            builder.UseSetting("Jwt:SigningKey", "integration-test-signing-key-0123456789abcdef");
         });
 
         await using var scope = _factory.Services.CreateAsyncScope();
         await scope.ServiceProvider.GetRequiredService<OrderDbContext>().Database.MigrateAsync();
+        await DemoUserSeeder.SeedAsync(_factory.Services);
+
+        // Sign every demo account in once; tests pick the identity they need.
+        using var anonymous = _factory.CreateClient();
+        foreach (var (username, _, _, password) in DemoUserSeeder.Accounts)
+        {
+            var response = await anonymous.PostAsJsonAsync("/api/auth/login", new { username, password });
+            response.EnsureSuccessStatusCode();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            _tokens[username] = body.GetProperty("accessToken").GetString()!;
+        }
     }
 
-    public HttpClient CreateClient() => Factory.CreateClient();
+    /// <summary>A client signed in as <paramref name="username"/> (default: the "admin" demo account).</summary>
+    public HttpClient CreateClient(string username = "admin")
+    {
+        var client = Factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _tokens[username]);
+        return client;
+    }
 
-    /// <summary>Clears orders and puts every product back to its seeded stock.</summary>
+    public HttpClient CreateAnonymousClient() => Factory.CreateClient();
+
+    /// <summary>Clears orders, removes products created by tests and puts seeded products back to their initial state.</summary>
     public async Task ResetDatabaseAsync()
     {
         await using var db = CreateDbContext();
         await db.Database.ExecuteSqlRawAsync("""TRUNCATE "trOrderItem", "trOrder", "trIdempotencyKey" """);
+        var seededIds = SeedData.Products.Select(p => p.Id).ToList();
+        await db.Products.IgnoreQueryFilters().Where(p => !seededIds.Contains(p.Id)).ExecuteDeleteAsync();
+        await db.Users.IgnoreQueryFilters().ExecuteUpdateAsync(s => s.SetProperty(u => u.IsActive, true));
         foreach (var product in SeedData.Products)
         {
             await db.Products.IgnoreQueryFilters().Where(p => p.Id == product.Id)

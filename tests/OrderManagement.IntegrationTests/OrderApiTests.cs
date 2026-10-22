@@ -175,37 +175,27 @@ public sealed class OrderApiTests(ApiFixture fixture) : IAsyncLifetime
     // ---------------- Standard columns: audit, active, soft delete ----------------
 
     [Fact]
-    public async Task Audit_columns_record_who_created_and_who_last_updated()
+    public async Task Audit_columns_record_the_signed_in_user()
     {
-        var create = new HttpRequestMessage(HttpMethod.Post, "/api/orders")
-        {
-            Content = JsonContent.Create(Order("CUST-1", (Indomie, 1)), options: Json)
-        };
-        create.Headers.Add("Idempotency-Key", Guid.NewGuid().ToString());
-        create.Headers.Add("X-User-Id", "sales.budi");
-        var order = (await (await _client.SendAsync(create)).Content.ReadFromJsonAsync<OrderResponse>(Json))!;
+        var sales = fixture.CreateClient("sales");
+        var order = await sales.CreateOrderAsync(Order("CUST-1", (Indomie, 1)));
 
-        order.CreatedBy.Should().Be("sales.budi");
+        order.CreatedBy.Should().Be("sales");
         order.UpdatedAt.Should().BeNull();
 
-        var patch = new HttpRequestMessage(HttpMethod.Patch, $"/api/orders/{order.Id}/status")
-        {
-            Content = JsonContent.Create(new { status = "Confirmed" })
-        };
-        patch.Headers.Add("X-User-Id", "admin.sari");
-        (await _client.SendAsync(patch)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await _client.PatchStatusAsync(order.Id, "Confirmed")).StatusCode.Should().Be(HttpStatusCode.OK);
 
         await using var db = fixture.CreateDbContext();
         var row = await db.Orders.Include(o => o.Items).SingleAsync(o => o.Id == order.Id);
-        row.InsertedBy.Should().Be("sales.budi");
-        row.UpdatedBy.Should().Be("admin.sari");
+        row.InsertedBy.Should().Be("sales");
+        row.UpdatedBy.Should().Be("admin");
         row.UpdatedAt.Should().NotBeNull();
         row.IsActive.Should().BeTrue();
         row.IsDeleted.Should().BeFalse();
-        row.Items.Should().OnlyContain(i => i.InsertedBy == "sales.budi" && i.Id != Guid.Empty);
+        row.Items.Should().OnlyContain(i => i.InsertedBy == "sales" && i.Id != Guid.Empty);
 
         var product = await db.Products.SingleAsync(p => p.Id == Indomie);
-        product.UpdatedBy.Should().Be("sales.budi", "the stock deduction is audited on the product too");
+        product.UpdatedBy.Should().Be("sales", "the stock deduction is audited on the product too");
     }
 
     [Fact]

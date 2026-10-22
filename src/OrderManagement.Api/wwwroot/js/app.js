@@ -1,4 +1,4 @@
-import { api, DEFAULT_USER, getUser, newId, setUser } from './api.js';
+import { api, newId, session, setUnauthorizedHandler } from './api.js';
 
 // ---------------------------------------------------------------- helpers
 
@@ -22,15 +22,17 @@ const STATUS_STYLE = {
   Pending: 'secondary', Confirmed: 'info', Shipped: 'primary', Delivered: 'success', Cancelled: 'danger'
 };
 const ACTIONS = {
-  Confirmed: { label: 'Confirm', icon: 'check2-circle', css: 'outline-info' },
-  Shipped: { label: 'Ship', icon: 'truck', css: 'outline-primary' },
-  Delivered: { label: 'Deliver', icon: 'house-check', css: 'outline-success' },
-  Cancelled: { label: 'Cancel', icon: 'x-circle', css: 'outline-danger' }
+  Confirmed: { label: 'Confirm', icon: 'check2-circle', css: 'outline-info', roles: ['Admin'] },
+  Shipped: { label: 'Ship', icon: 'truck', css: 'outline-primary', roles: ['Admin'] },
+  Delivered: { label: 'Deliver', icon: 'house-check', css: 'outline-success', roles: ['Admin'] },
+  Cancelled: { label: 'Cancel', icon: 'x-circle', css: 'outline-danger', roles: ['Admin', 'Sales'] }
 };
 
 const statusBadge = status => `<span class="badge text-bg-${STATUS_STYLE[status] ?? 'secondary'}">${esc(status)}</span>`;
 const httpBadge = status => {
-  const tone = status >= 200 && status < 300 ? 'success' : status === 409 ? 'warning' : 'danger';
+  let tone = 'danger';
+  if (status >= 200 && status < 300) tone = 'success';
+  else if (status === 409) tone = 'warning';
   return `<span class="badge text-bg-${tone}">${status || 'ERR'}</span>`;
 };
 
@@ -46,6 +48,7 @@ function toast(html, variant = 'success') {
 }
 
 function problemToast(res) {
+  if (res.status === 401) return; // handled by the session-expired flow
   const p = res.data ?? {};
   toast(`<strong>${esc(p.title ?? 'Error')}</strong>
     <span class="opacity-75">(${res.status || 'network'}${p.errorCode ? ` · ${esc(p.errorCode)}` : ''})</span>
@@ -65,24 +68,107 @@ function setBusy(button, busy) {
   }
 }
 
+/** Marks inputs invalid from a 400 ProblemDetails `errors` map using [data-*field] feedback elements. */
+function showFormErrors(form, errors, attribute) {
+  for (const [key, messages] of Object.entries(errors ?? {})) {
+    const feedback = $(`[${attribute}="${key}"]`, form);
+    if (!feedback) continue;
+    feedback.textContent = messages.join(' ');
+    feedback.previousElementSibling?.classList.add('is-invalid');
+  }
+}
+
+function clearFormErrors(form) {
+  $$('.is-invalid', form).forEach(el => el.classList.remove('is-invalid'));
+  $$('.invalid-feedback', form).forEach(el => { el.textContent = ''; });
+}
+
 // ---------------------------------------------------------------- state
 
 const state = {
   products: [],
   orderKey: newId(),
   query: { page: 1, pageSize: 10 },
-  detailOrderId: null
+  detailOrderId: null,
+  started: false
 };
 
-// ---------------------------------------------------------------- user
+// ---------------------------------------------------------------- login / session
 
-const userInput = $('#user-name');
-userInput.value = getUser();
-userInput.addEventListener('change', () => {
-  const name = userInput.value.trim() || DEFAULT_USER;
-  userInput.value = name;
-  setUser(name);
-  toast(`Request berikutnya dikirim sebagai <strong>${esc(name)}</strong>`, 'secondary');
+function showLogin(message) {
+  $('#app-view').classList.add('d-none');
+  $('#login-view').classList.remove('d-none');
+  const alert = $('#login-alert');
+  alert.textContent = message ?? '';
+  alert.classList.toggle('d-none', !message);
+  $('#l-password').value = '';
+  $('#l-username').focus();
+}
+
+async function enterApp(user) {
+  document.body.classList.toggle('role-admin', user.role === 'Admin');
+  $('#u-name').textContent = user.displayName;
+  $('#u-username').textContent = user.username;
+  $$('.u-name-inline').forEach(el => { el.textContent = user.displayName; });
+  const role = $('#u-role');
+  role.textContent = user.role;
+  role.className = `badge ms-1 text-bg-${user.role === 'Admin' ? 'primary' : 'secondary'}`;
+
+  // Sales users cannot open the simulation tab; fall back to Orders if it was active.
+  if (user.role !== 'Admin' && $('#tab-sim').classList.contains('active')) {
+    bootstrap.Tab.getOrCreateInstance($('[data-bs-target="#tab-orders"]')).show();
+  }
+
+  $('#login-view').classList.add('d-none');
+  $('#app-view').classList.remove('d-none');
+
+  if (!state.started) {
+    state.started = true;
+    renderKey();
+    await loadProducts();
+    addItemRow(INDOMIE, 2);
+    addItemRow(AQUA, 1);
+  } else {
+    await loadProducts();
+  }
+  await loadOrders();
+}
+
+setUnauthorizedHandler(() => {
+  if (!session.token) return;
+  session.clear();
+  showLogin('Sesi berakhir, silakan masuk kembali.');
+});
+
+$('#login-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('#l-submit');
+  setBusy(button, true);
+  const res = await api.login($('#l-username').value.trim(), $('#l-password').value);
+  setBusy(button, false);
+
+  if (!res.ok) {
+    const alert = $('#login-alert');
+    alert.textContent = res.data?.detail ?? res.data?.title ?? 'Login gagal';
+    alert.classList.remove('d-none');
+    return;
+  }
+  session.set(res.data);
+  toast(`Selamat datang, <strong>${esc(res.data.user.displayName)}</strong>`, 'secondary');
+  await enterApp(res.data.user);
+});
+
+$('#demo-accounts').addEventListener('click', event => {
+  const account = event.target.closest('[data-user]');
+  if (!account) return;
+  $('#l-username').value = account.dataset.user;
+  $('#l-password').value = account.dataset.pass;
+  $('#l-submit').focus();
+});
+
+$('#logout').addEventListener('click', () => {
+  session.clear();
+  showLogin();
 });
 
 // ---------------------------------------------------------------- products
@@ -95,30 +181,132 @@ async function loadProducts() {
   refreshProductOptions();
 }
 
+function stockBadge(stock) {
+  if (stock === 0) return '<span class="badge text-bg-danger">Habis</span>';
+  if (stock < 20) return '<span class="badge text-bg-warning">Menipis</span>';
+  return '';
+}
+
 function renderProducts() {
   const max = Math.max(1, ...state.products.map(p => p.stockQuantity));
-  $('#p-rows').innerHTML = state.products.map(p => {
-    const tone = p.stockQuantity === 0 ? 'danger' : p.stockQuantity < 20 ? 'warning' : 'success';
-    return `<tr>
-      <td><div class="fw-medium">${esc(p.name)}</div><div class="order-id text-body-secondary">${esc(p.id)}</div></td>
-      <td class="text-end">${rupiah.format(p.price)}</td>
-      <td class="text-end">
-        <div class="fw-semibold">${p.stockQuantity}</div>
-        <div class="progress stock-bar ms-auto" role="progressbar" aria-label="Stock ${esc(p.name)}">
-          <div class="progress-bar bg-${tone}" style="width:${(p.stockQuantity / max) * 100}%"></div>
-        </div>
-      </td>
-      <td>${p.isActive ? '<span class="badge text-bg-success">Aktif</span>' : '<span class="badge text-bg-secondary">Nonaktif</span>'}
-          ${p.stockQuantity === 0 ? '<span class="badge text-bg-danger">Habis</span>' : p.stockQuantity < 20 ? '<span class="badge text-bg-warning">Menipis</span>' : ''}</td>
-    </tr>`;
-  }).join('');
+  $('#p-rows').innerHTML = state.products.length === 0
+    ? '<tr><td colspan="6" class="text-center text-body-secondary py-5">Belum ada produk</td></tr>'
+    : state.products.map(p => {
+      let tone = 'success';
+      if (p.stockQuantity === 0) tone = 'danger';
+      else if (p.stockQuantity < 20) tone = 'warning';
+      return `<tr>
+        <td><div class="fw-medium">${esc(p.name)}</div><div class="order-id text-body-secondary">${esc(p.id)}</div></td>
+        <td class="text-end">${rupiah.format(p.price)}</td>
+        <td class="text-end">
+          <div class="fw-semibold">${p.stockQuantity}</div>
+          <div class="progress stock-bar ms-auto" role="progressbar" aria-label="Stock ${esc(p.name)}">
+            <div class="progress-bar bg-${tone}" style="width:${(p.stockQuantity / max) * 100}%"></div>
+          </div>
+        </td>
+        <td>${p.isActive ? '<span class="badge text-bg-success">Aktif</span>' : '<span class="badge text-bg-secondary">Nonaktif</span>'}
+            ${stockBadge(p.stockQuantity)}</td>
+        <td class="d-none d-lg-table-cell small">${fmtDate(p.updatedAt ?? p.createdAt)}<div class="text-body-secondary">${esc(p.updatedBy ?? p.createdBy)}</div></td>
+        <td class="text-end actions admin-only">
+          <button class="btn btn-sm btn-outline-success" data-stock="${p.id}" title="Atur stock"><i class="bi bi-box-arrow-in-down"></i></button>
+          <button class="btn btn-sm btn-outline-secondary" data-edit-product="${p.id}" title="Edit"><i class="bi bi-pencil"></i></button>
+          <button class="btn btn-sm btn-outline-danger" data-delete-product="${p.id}" title="Hapus"><i class="bi bi-trash"></i></button>
+        </td>
+      </tr>`;
+    }).join('');
 }
 
 $('#p-refresh').addEventListener('click', loadProducts);
 setInterval(() => {
   const productsVisible = $('#tab-products').classList.contains('active');
-  if ($('#p-auto').checked && productsVisible && document.visibilityState === 'visible') loadProducts();
+  if (session.token && $('#p-auto').checked && productsVisible && document.visibilityState === 'visible') loadProducts();
 }, 3000);
+
+// Create / edit product
+
+const productModal = new bootstrap.Modal('#product-modal');
+
+function openProductModal(product) {
+  const form = $('#product-form');
+  clearFormErrors(form);
+  $('#product-title').textContent = product ? 'Edit Produk' : 'Tambah Produk';
+  $('#pf-id').value = product?.id ?? '';
+  $('#pf-name').value = product?.name ?? '';
+  $('#pf-price').value = product?.price ?? '';
+  $('#pf-stock').value = 0;
+  $('#pf-active').checked = product?.isActive ?? true;
+  // Stock of an existing product is only changed through atomic adjustments.
+  $('#pf-stock-group').classList.toggle('d-none', Boolean(product));
+  $('#pf-stock-note').classList.toggle('d-none', !product);
+  productModal.show();
+}
+
+$('#p-add').addEventListener('click', () => openProductModal());
+
+$('#product-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  clearFormErrors(form);
+  const id = $('#pf-id').value;
+  const body = {
+    name: $('#pf-name').value.trim(),
+    price: Number($('#pf-price').value),
+    isActive: $('#pf-active').checked
+  };
+
+  const button = $('#pf-submit');
+  setBusy(button, true);
+  const res = id
+    ? await api.updateProduct(id, body)
+    : await api.createProduct({ ...body, stockQuantity: Number($('#pf-stock').value) });
+  setBusy(button, false);
+
+  if (!res.ok) {
+    if (res.status === 400) showFormErrors(form, res.data?.errors, 'data-pfield');
+    if (res.data?.errorCode === 'PRODUCT_NAME_TAKEN') showFormErrors(form, { name: [res.data.detail] }, 'data-pfield');
+    return problemToast(res);
+  }
+  productModal.hide();
+  toast(`Produk <strong>${esc(res.data.name)}</strong> ${id ? 'diperbarui' : 'ditambahkan'}`);
+  await loadProducts();
+});
+
+// Stock adjustment
+
+const stockModal = new bootstrap.Modal('#stock-modal');
+
+function openStockModal(product) {
+  $('#sf-id').value = product.id;
+  $('#sf-name').textContent = product.name;
+  $('#sf-current').textContent = product.stockQuantity;
+  $('#sf-qty').value = 10;
+  $('#sf-reason').value = '';
+  $('#sf-in').checked = true;
+  stockModal.show();
+}
+
+$('#stock-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const direction = Number($('input[name="sf-kind"]:checked').value);
+  const quantity = direction * Math.abs(Number($('#sf-qty').value));
+  const button = $('#sf-submit');
+  setBusy(button, true);
+  const res = await api.adjustStock($('#sf-id').value, quantity, $('#sf-reason').value.trim() || null);
+  setBusy(button, false);
+
+  if (!res.ok) return problemToast(res);
+  stockModal.hide();
+  toast(`Stock <strong>${esc(res.data.name)}</strong> sekarang ${res.data.stockQuantity}`);
+  await loadProducts();
+});
+
+async function deleteProduct(product) {
+  if (!confirm(`Hapus produk "${product.name}"? Order lama tetap menyimpan data produk ini.`)) return;
+  const res = await api.deleteProduct(product.id);
+  if (!res.ok) return problemToast(res);
+  toast(`Produk <strong>${esc(product.name)}</strong> dihapus`, 'secondary');
+  await loadProducts();
+}
 
 // ---------------------------------------------------------------- create order form
 
@@ -168,26 +356,18 @@ function renderKey() {
   $('#f-key').textContent = state.orderKey;
 }
 
-function clearFieldErrors() {
-  $$('#order-form .is-invalid').forEach(el => el.classList.remove('is-invalid'));
-  $$('#order-form [data-field]').forEach(el => { el.textContent = ''; });
-}
-
-function showFieldErrors(errors) {
+function showOrderFieldErrors(errors) {
   const itemMessages = [];
   for (const [key, messages] of Object.entries(errors)) {
-    if (key.startsWith('items')) {
-      const match = key.match(/^items\[(\d+)\]\.(\w+)/);
-      itemMessages.push(match ? `Item ${Number(match[1]) + 1}: ${messages.join(' ')}` : messages.join(' '));
-      if (match) $$('.item-row')[Number(match[1])]?.querySelector(match[2] === 'quantity' ? '.item-qty' : '.item-product')?.classList.add('is-invalid');
-      continue;
-    }
-    const feedback = $(`#order-form [data-field="${key}"]`);
-    if (feedback) {
-      feedback.textContent = messages.join(' ');
-      feedback.previousElementSibling?.classList.add('is-invalid');
+    if (!key.startsWith('items')) continue;
+    const match = key.match(/^items\[(\d+)\]\.(\w+)/);
+    itemMessages.push(match ? `Item ${Number(match[1]) + 1}: ${messages.join(' ')}` : messages.join(' '));
+    if (match) {
+      const row = $$('.item-row')[Number(match[1])];
+      row?.querySelector(match[2] === 'quantity' ? '.item-qty' : '.item-product')?.classList.add('is-invalid');
     }
   }
+  showFormErrors($('#order-form'), errors, 'data-field');
   $('#order-form [data-field="items"]').textContent = itemMessages.join(' · ');
 }
 
@@ -198,7 +378,7 @@ $('#f-new-key').addEventListener('click', () => { state.orderKey = newId(); rend
 // server returns the same order (replay), which is exactly the behaviour this prototype demonstrates.
 $('#order-form').addEventListener('submit', async event => {
   event.preventDefault();
-  clearFieldErrors();
+  clearFormErrors(event.currentTarget);
   const key = state.orderKey;
   const res = await api.createOrder({
     customerId: $('#f-customer').value.trim(),
@@ -220,7 +400,7 @@ $('#order-form').addEventListener('submit', async event => {
     return;
   }
 
-  if (res.status === 400 && res.data?.errors) showFieldErrors(res.data.errors);
+  if (res.status === 400 && res.data?.errors) showOrderFieldErrors(res.data.errors);
   problemToast(res);
   if (res.data?.errorCode === 'IDEMPOTENCY_KEY_REUSED') {
     state.orderKey = newId();
@@ -271,11 +451,14 @@ async function loadOrders() {
 }
 
 function actionButtons(order, size) {
-  return order.allowedNextStatuses.map(next => {
-    const action = ACTIONS[next];
-    return `<button class="btn ${size} btn-${action.css}" data-action="${next}" data-id="${order.id}" data-version="${order.version}" title="${action.label}">
-      <i class="bi bi-${action.icon}"></i><span class="d-none d-xl-inline ms-1">${action.label}</span></button>`;
-  }).join(' ');
+  const role = session.user?.role;
+  return order.allowedNextStatuses
+    .filter(next => ACTIONS[next].roles.includes(role))
+    .map(next => {
+      const action = ACTIONS[next];
+      return `<button class="btn ${size} btn-${action.css}" data-action="${next}" data-id="${order.id}" data-version="${order.version}" title="${action.label}">
+        <i class="bi bi-${action.icon}"></i><span class="d-none d-xl-inline ms-1">${action.label}</span></button>`;
+    }).join(' ');
 }
 
 function renderPager(page, totalPages) {
@@ -359,9 +542,10 @@ async function showDetail(id) {
         <tfoot><tr><th colspan="3" class="text-end">Total</th><th class="text-end">${rupiah.format(o.totalAmount)}</th></tr></tfoot>
       </table>
     </div>`;
-  $('#detail-actions').innerHTML = (o.allowedNextStatuses.length
-    ? actionButtons(o, '')
-    : '<span class="text-body-secondary small me-auto"><i class="bi bi-lock me-1"></i>Status terminal — tidak bisa diubah lagi.</span>')
+  const actions = actionButtons(o, '');
+  $('#detail-actions').innerHTML = (actions
+    || `<span class="text-body-secondary small me-auto"><i class="bi bi-lock me-1"></i>${o.allowedNextStatuses.length
+      ? 'Tidak ada aksi untuk role Anda.' : 'Status terminal — tidak bisa diubah lagi.'}</span>`)
     + ' <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>';
   detailModal.show();
 }
@@ -374,7 +558,19 @@ document.addEventListener('click', event => {
     return;
   }
   const action = event.target.closest('[data-action]');
-  if (action) changeStatus(action);
+  if (action) {
+    changeStatus(action);
+    return;
+  }
+  const productButton = event.target.closest('[data-stock], [data-edit-product], [data-delete-product]');
+  if (productButton) {
+    const id = productButton.dataset.stock ?? productButton.dataset.editProduct ?? productButton.dataset.deleteProduct;
+    const product = state.products.find(p => p.id === id);
+    if (!product) return;
+    if (productButton.dataset.stock) openStockModal(product);
+    else if (productButton.dataset.editProduct) openProductModal(product);
+    else deleteProduct(product);
+  }
 });
 
 // ---------------------------------------------------------------- concurrency simulation
@@ -410,28 +606,32 @@ const sim = {
 
 async function stockOf(productId) {
   const res = await api.product(productId);
-  return res.ok ? res.data.stockQuantity : NaN;
+  return res.ok ? res.data.stockQuantity : Number.NaN;
 }
 
 // Releases all requests in the same tick so they overlap on the server.
 const concurrently = (count, makeRequest) => Promise.all(Array.from({ length: count }, (_, i) => makeRequest(i)));
+const me = () => esc(session.user?.username);
 
 async function scenarioA() {
   const buyers = clamp($('#sim-a-count').value, 2, 30);
   const initialStock = 15;
   const perOrder = 10;
-  sim.start(`Skenario A — ${buyers} pembeli × ${perOrder} unit, stock ${initialStock}`);
+  sim.start(`Skenario A — ${buyers} order × ${perOrder} unit, stock ${initialStock}`);
 
   const setup = await api.setStock(PRODUCT_X, initialStock);
-  if (!setup.ok) return demoUnavailable(setup);
+  if (!setup.ok) {
+    sim.row('setup: set stock Product X', setup);
+    return sim.verdict(false, 'Endpoint demo hanya tersedia di environment Development');
+  }
 
   const results = await concurrently(buyers, i => api.createOrder({
     customerId: `SIM-A-${i + 1}`,
     shippingAddress: 'Simulasi Skenario A',
     items: [{ productId: PRODUCT_X, quantity: perOrder }]
-  }, newId(), { user: `buyer.${i + 1}` }));
+  }, newId()));
 
-  results.forEach((res, i) => sim.row(`POST /orders · buyer.${i + 1} · ${perOrder} unit`, res,
+  results.forEach((res, i) => sim.row(`POST /orders · ${me()} · customer SIM-A-${i + 1} · ${perOrder} unit`, res,
     res.ok ? `Order ${shortId(res.data.id)}` : undefined));
 
   const finalStock = await stockOf(PRODUCT_X);
@@ -458,10 +658,10 @@ async function scenarioB() {
   const stockBefore = await stockOf(INDOMIE);
 
   const [ship, cancel] = await concurrently(2, i => i === 0
-    ? api.updateStatus(created.data.id, 'Shipped', 2, { user: 'admin.1' })
-    : api.cancel(created.data.id, 2, { user: 'admin.2' }));
-  sim.row('<strong>admin.1</strong>: PATCH → Shipped (v2)', ship, ship.ok ? '<strong>Menang</strong>' : undefined);
-  sim.row('<strong>admin.2</strong>: POST /cancel (v2)', cancel, cancel.ok ? '<strong>Menang</strong>' : undefined);
+    ? api.updateStatus(created.data.id, 'Shipped', 2)
+    : api.cancel(created.data.id, 2));
+  sim.row(`<strong>Request 1</strong> (${me()}): PATCH → Shipped (v2)`, ship, ship.ok ? '<strong>Menang</strong>' : undefined);
+  sim.row(`<strong>Request 2</strong> (${me()}): POST /cancel (v2)`, cancel, cancel.ok ? '<strong>Menang</strong>' : undefined);
 
   const final = (await api.getOrder(created.data.id)).data;
   const stockAfter = await stockOf(INDOMIE);
@@ -472,7 +672,7 @@ async function scenarioB() {
   sim.facts([['Status akhir', statusBadge(final.status)], ['Version', final.version], ['Diupdate oleh', esc(final.updatedBy)],
     ['Stock Indomie', `${stockBefore} → ${stockAfter}`]]);
   sim.verdict(winners === 1 && loserIs409 && stockConsistent,
-    winners === 1 ? `Lulus — ${final.updatedBy} menang, yang lain 409` : `Gagal — ${winners} update berhasil`);
+    winners === 1 ? `Lulus — ${final.status} menang, yang lain 409` : `Gagal — ${winners} update berhasil`);
 }
 
 async function scenarioC() {
@@ -487,8 +687,8 @@ async function scenarioC() {
 
   results.forEach(res => {
     const replayed = res.headers.get('Idempotent-Replayed') === 'true';
-    sim.row(`POST /orders · key …${key.slice(-6)}`, res,
-      res.ok ? `Order ${shortId(res.data.id)} ${replayed ? '<span class="badge text-bg-info">replay</span>' : '<span class="badge text-bg-success">baru</span>'}` : undefined);
+    const tag = replayed ? '<span class="badge text-bg-info">replay</span>' : '<span class="badge text-bg-success">baru</span>';
+    sim.row(`POST /orders · ${me()} · key …${key.slice(-6)}`, res, res.ok ? `Order ${shortId(res.data.id)} ${tag}` : undefined);
   });
 
   const stockAfter = await stockOf(AQUA);
@@ -498,11 +698,6 @@ async function scenarioC() {
 
   sim.facts([['Request', count], ['Order dibuat', orderIds.size], ['Replay', count - originals], ['Stock Aqua', `${stockBefore} → ${stockAfter}`]]);
   sim.verdict(passed, passed ? 'Lulus — 1 order, stock dipotong sekali' : 'Gagal — lihat detail request');
-}
-
-function demoUnavailable(res) {
-  sim.row('setup: set stock', res);
-  sim.verdict(false, 'Endpoint demo hanya tersedia di environment Development');
 }
 
 const scenarios = { a: scenarioA, b: scenarioB, c: scenarioC };
@@ -520,7 +715,7 @@ $$('[data-sim]').forEach(button => button.addEventListener('click', async () => 
 
 $('#sim-reset').addEventListener('click', async event => {
   const button = event.currentTarget;
-  if (!confirm('Hapus semua order dan kembalikan stock produk ke nilai awal?')) return;
+  if (!confirm('Hapus semua order dan kembalikan stock produk awal?')) return;
   setBusy(button, true);
   const res = await api.resetDemo();
   setBusy(button, false);
@@ -531,9 +726,15 @@ $('#sim-reset').addEventListener('click', async event => {
 
 // ---------------------------------------------------------------- boot
 
-renderKey();
-await loadProducts();
-addItemRow(INDOMIE, 2);
-addItemRow(AQUA, 1);
-await loadOrders();
+if (session.token) {
+  const res = await api.me();
+  if (res.ok) {
+    await enterApp(res.data);
+  } else {
+    session.clear();
+    showLogin();
+  }
+} else {
+  showLogin();
+}
 

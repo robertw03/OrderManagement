@@ -1,5 +1,7 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using OrderManagement.Api.Features.Auth;
 using Microsoft.Net.Http.Headers;
 using OrderManagement.Api.Common.Errors;
 
@@ -57,6 +59,7 @@ public sealed class OrdersController(OrderService orders) : ControllerBase
     /// as an <c>If-Match</c> header to get a 409 instead of overwriting someone else's change.
     /// </summary>
     [HttpPatch("{id:guid}/status")]
+    [Authorize(Roles = Roles.Admin)]
     [ProducesResponseType<OrderResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, "application/problem+json")]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict, "application/problem+json")]

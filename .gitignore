@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # Serilog file sink
 logs/
+
+# Claude Code local context (not part of the submission)
+.claude/

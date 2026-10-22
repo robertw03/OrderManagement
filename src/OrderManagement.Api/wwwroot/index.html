@@ -14,6 +14,43 @@
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
+  <!-- ====================== LOGIN ====================== -->
+  <div id="login-view" class="min-vh-100 d-flex align-items-center justify-content-center p-3 d-none">
+    <div class="card shadow-sm login-card">
+      <div class="card-body p-4">
+        <div class="text-center mb-4">
+          <i class="bi bi-box-seam text-primary display-6"></i>
+          <h1 class="h4 mt-2 mb-1">Order Management</h1>
+          <p class="text-body-secondary small mb-0">Masuk untuk melanjutkan</p>
+        </div>
+        <div id="login-alert" class="alert alert-danger py-2 small d-none" role="alert"></div>
+        <form id="login-form" novalidate>
+          <div class="mb-3">
+            <label class="form-label" for="l-username">Username</label>
+            <input id="l-username" class="form-control" autocomplete="username" required autofocus>
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="l-password">Password</label>
+            <input id="l-password" type="password" class="form-control" autocomplete="current-password" required>
+          </div>
+          <button id="l-submit" type="submit" class="btn btn-primary w-100"><i class="bi bi-box-arrow-in-right me-1"></i>Masuk</button>
+        </form>
+        <div class="mt-4">
+          <div class="small text-body-secondary mb-2">Akun demo (klik untuk mengisi):</div>
+          <div class="list-group list-group-flush small" id="demo-accounts">
+            <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between" data-user="admin" data-pass="Admin123!">
+              <span><strong>admin</strong> · Admin123!</span><span class="badge text-bg-primary">Admin</span></button>
+            <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between" data-user="admin2" data-pass="Admin123!">
+              <span><strong>admin2</strong> · Admin123!</span><span class="badge text-bg-primary">Admin</span></button>
+            <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between" data-user="sales" data-pass="Sales123!">
+              <span><strong>sales</strong> · Sales123!</span><span class="badge text-bg-secondary">Sales</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="app-view" class="d-none">
   <nav class="navbar navbar-expand-md border-bottom bg-body-tertiary sticky-top">
     <div class="container-xl">
       <a class="navbar-brand fw-semibold" href="#"><i class="bi bi-box-seam me-2 text-primary"></i>Order Management</a>
@@ -24,14 +61,20 @@
         <ul class="nav nav-pills me-auto my-2 my-md-0" role="tablist">
           <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#tab-orders" type="button" role="tab"><i class="bi bi-receipt me-1"></i>Orders</button></li>
           <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-products" type="button" role="tab"><i class="bi bi-boxes me-1"></i>Produk</button></li>
-          <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-sim" type="button" role="tab"><i class="bi bi-lightning-charge me-1"></i>Simulasi Concurrency</button></li>
+          <li class="nav-item admin-only"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-sim" type="button" role="tab"><i class="bi bi-lightning-charge me-1"></i>Simulasi Concurrency</button></li>
         </ul>
         <div class="d-flex align-items-center gap-2">
-          <div class="input-group input-group-sm user-box" title="Dikirim sebagai header X-User-Id dan tercatat di kolom audit">
-            <span class="input-group-text"><i class="bi bi-person-circle"></i></span>
-            <input id="user-name" class="form-control" placeholder="user" maxlength="100" aria-label="User">
-          </div>
           <a class="btn btn-sm btn-outline-secondary text-nowrap" href="/scalar" target="_blank" rel="noopener"><i class="bi bi-book me-1"></i>API Docs</a>
+          <div class="dropdown">
+            <button class="btn btn-sm btn-outline-primary dropdown-toggle text-nowrap" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+              <i class="bi bi-person-circle me-1"></i><span id="u-name"></span> <span id="u-role" class="badge ms-1"></span>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><span class="dropdown-item-text small text-body-secondary">Masuk sebagai <strong id="u-username"></strong></span></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><button class="dropdown-item" id="logout"><i class="bi bi-box-arrow-right me-1"></i>Keluar</button></li>
+            </ul>
+          </div>
         </div>
       </div>
     </div>
@@ -135,6 +178,7 @@
         <div class="card shadow-sm">
           <div class="card-header d-flex align-items-center gap-2">
             <span class="fw-semibold me-auto"><i class="bi bi-boxes me-1"></i>Produk &amp; Stock</span>
+            <button id="p-add" class="btn btn-sm btn-primary admin-only"><i class="bi bi-plus-lg me-1"></i>Tambah Produk</button>
             <div class="form-check form-switch mb-0 small">
               <input class="form-check-input" type="checkbox" id="p-auto" checked>
               <label class="form-check-label" for="p-auto">Auto refresh</label>
@@ -143,7 +187,7 @@
           </div>
           <div class="table-responsive">
             <table class="table align-middle mb-0">
-              <thead><tr><th>Produk</th><th class="text-end">Harga</th><th class="text-end">Stock</th><th>Status</th></tr></thead>
+              <thead><tr><th>Produk</th><th class="text-end">Harga</th><th class="text-end">Stock</th><th>Status</th><th class="d-none d-lg-table-cell">Terakhir diubah</th><th class="text-end admin-only">Aksi</th></tr></thead>
               <tbody id="p-rows"></tbody>
             </table>
           </div>
@@ -155,7 +199,8 @@
         <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
           <div class="me-auto">
             <h2 class="h5 mb-1">Simulasi Skenario Concurrency</h2>
-            <p class="text-body-secondary small mb-0">Setiap tombol menembakkan beberapa request <strong>bersamaan</strong> ke API sungguhan, lalu memverifikasi hasilnya.</p>
+            <p class="text-body-secondary small mb-0">Setiap tombol menembakkan beberapa request <strong>bersamaan</strong> ke API sungguhan memakai token
+              user yang sedang login (<strong class="u-name-inline"></strong>), lalu memverifikasi hasilnya.</p>
           </div>
           <button id="sim-reset" class="btn btn-outline-danger btn-sm"><i class="bi bi-arrow-counterclockwise me-1"></i>Reset data demo</button>
         </div>
@@ -180,8 +225,8 @@
             <div class="card h-100 shadow-sm">
               <div class="card-body">
                 <h3 class="h6"><span class="badge text-bg-primary me-1">B</span>Concurrent Status Update</h3>
-                <p class="small text-body-secondary">Order dibuat dan di-Confirm, lalu <strong>admin 1 → Shipped</strong> dan <strong>admin 2 → Cancel</strong> bersamaan
-                  dengan version yang sama. Hanya satu menang, yang lain mendapat 409.</p>
+                <p class="small text-body-secondary">Order dibuat dan di-Confirm, lalu <strong>request 1 → Shipped</strong> dan <strong>request 2 → Cancel</strong> dikirim bersamaan
+                  dengan version yang sama (seperti dua admin di dua tab). Hanya satu menang, yang lain mendapat 409.</p>
                 <button class="btn btn-primary btn-sm w-100" data-sim="b"><i class="bi bi-play-fill"></i> Jalankan</button>
               </div>
             </div>
@@ -233,6 +278,78 @@
         <div class="modal-footer" id="detail-actions"></div>
       </div>
     </div>
+  </div>
+
+  <!-- Product create / edit -->
+  <div class="modal fade" id="product-modal" tabindex="-1" aria-labelledby="product-title" aria-hidden="true">
+    <div class="modal-dialog">
+      <form class="modal-content" id="product-form" novalidate>
+        <div class="modal-header">
+          <h2 class="modal-title h5" id="product-title">Tambah Produk</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="pf-id">
+          <div class="mb-3">
+            <label class="form-label" for="pf-name">Nama produk</label>
+            <input id="pf-name" class="form-control" maxlength="200" required>
+            <div class="invalid-feedback" data-pfield="name"></div>
+          </div>
+          <div class="row g-3 mb-3">
+            <div class="col-sm-6">
+              <label class="form-label" for="pf-price">Harga (Rp)</label>
+              <input id="pf-price" type="number" class="form-control" min="0" step="0.01" required>
+              <div class="invalid-feedback" data-pfield="price"></div>
+            </div>
+            <div class="col-sm-6" id="pf-stock-group">
+              <label class="form-label" for="pf-stock">Stock awal</label>
+              <input id="pf-stock" type="number" class="form-control" min="0" step="1" value="0">
+              <div class="invalid-feedback" data-pfield="stockQuantity"></div>
+            </div>
+          </div>
+          <div class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" id="pf-active" checked>
+            <label class="form-check-label" for="pf-active">Aktif (bisa dipesan)</label>
+          </div>
+          <div class="form-text" id="pf-stock-note">Stock produk yang sudah ada diubah lewat tombol <i class="bi bi-box-arrow-in-down"></i> Atur Stock agar tidak menimpa pengurangan dari order yang sedang berjalan.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+          <button type="submit" class="btn btn-primary" id="pf-submit">Simpan</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Stock adjustment -->
+  <div class="modal fade" id="stock-modal" tabindex="-1" aria-labelledby="stock-title" aria-hidden="true">
+    <div class="modal-dialog modal-sm">
+      <form class="modal-content" id="stock-form" novalidate>
+        <div class="modal-header">
+          <h2 class="modal-title h5" id="stock-title">Atur Stock</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="sf-id">
+          <p class="small mb-3"><span id="sf-name" class="fw-semibold"></span><br>Stock saat ini: <strong id="sf-current"></strong></p>
+          <div class="btn-group w-100 mb-3" role="group" aria-label="Jenis penyesuaian">
+            <input type="radio" class="btn-check" name="sf-kind" id="sf-in" value="1" checked>
+            <label class="btn btn-outline-success" for="sf-in"><i class="bi bi-plus-lg"></i> Masuk</label>
+            <input type="radio" class="btn-check" name="sf-kind" id="sf-out" value="-1">
+            <label class="btn btn-outline-danger" for="sf-out"><i class="bi bi-dash-lg"></i> Keluar</label>
+          </div>
+          <label class="form-label" for="sf-qty">Jumlah</label>
+          <input id="sf-qty" type="number" class="form-control mb-3" min="1" step="1" value="10" required>
+          <label class="form-label" for="sf-reason">Keterangan</label>
+          <input id="sf-reason" class="form-control" maxlength="200" placeholder="mis. Barang masuk dari supplier">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+          <button type="submit" class="btn btn-primary" id="sf-submit">Simpan</button>
+        </div>
+      </form>
+    </div>
+  </div>
   </div>
 
   <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts"></div>

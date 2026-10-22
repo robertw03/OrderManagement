@@ -1,26 +1,15 @@
-using System.Text.RegularExpressions;
 using OrderManagement.Infrastructure;
 
 namespace OrderManagement.Api.Common;
 
 /// <summary>
-/// Resolves the acting user for audit columns from the X-User-Id header. This prototype has no
-/// authentication; in production the value would come from the authenticated principal (JWT claim).
+/// The signed-in user (from the bearer token) for audit columns. Work done outside an
+/// authenticated request — migrations, seeding — is attributed to "system".
 /// </summary>
-public sealed partial class HttpCurrentUser(IHttpContextAccessor accessor) : ICurrentUser
+public sealed class HttpCurrentUser(IHttpContextAccessor accessor) : ICurrentUser
 {
-    public const string HeaderName = "X-User-Id";
-    public const string Anonymous = "anonymous";
+    public const string System = "system";
 
-    public string UserName
-    {
-        get
-        {
-            var value = accessor.HttpContext?.Request.Headers[HeaderName].ToString();
-            return !string.IsNullOrEmpty(value) && SafeUserName().IsMatch(value) ? value : Anonymous;
-        }
-    }
-
-    [GeneratedRegex(@"^[A-Za-z0-9._@\-]{1,100}$")]
-    private static partial Regex SafeUserName();
+    public string UserName =>
+        accessor.HttpContext?.User.Identity is { IsAuthenticated: true, Name: { Length: > 0 } name } ? name : System;
 }

@@ -10,7 +10,9 @@ public class OrderDbContext(DbContextOptions<OrderDbContext> options) : DbContex
     public const string OrderTable = "trOrder";
     public const string OrderItemTable = "trOrderItem";
     public const string IdempotencyTable = "trIdempotencyKey";
+    public const string UserTable = "mUser";
 
+    public DbSet<User> Users => Set<User>();
     public DbSet<Product> Products => Set<Product>();
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
@@ -29,7 +31,20 @@ public class OrderDbContext(DbContextOptions<OrderDbContext> options) : DbContex
             });
             b.Property(p => p.Name).HasMaxLength(200);
             b.Property(p => p.Price).HasPrecision(18, 2);
+            // Product names are unique among non-deleted products; also settles two admins creating the same product at once.
+            b.HasIndex(p => p.Name).IsUnique().HasFilter($"{Q("bolDeleted")} = false");
             b.HasData(SeedData.Products);
+        });
+
+        modelBuilder.Entity<User>(b =>
+        {
+            b.ToTable(UserTable, t =>
+                t.HasCheckConstraint($"CK_{UserTable}_txtRole", $"{Q("txtRole")} IN ('Admin','Sales')"));
+            b.Property(u => u.Username).HasMaxLength(100);
+            b.Property(u => u.DisplayName).HasMaxLength(200);
+            b.Property(u => u.PasswordHash).HasMaxLength(500);
+            b.Property(u => u.Role).HasConversion<string>().HasMaxLength(20);
+            b.HasIndex(u => u.Username).IsUnique().HasFilter($"{Q("bolDeleted")} = false");
         });
 
         modelBuilder.Entity<Order>(b =>
@@ -83,7 +98,7 @@ public class OrderDbContext(DbContextOptions<OrderDbContext> options) : DbContex
 
     private static void ConfigureStandardColumns(ModelBuilder modelBuilder)
     {
-        foreach (var type in new[] { typeof(Product), typeof(Order), typeof(OrderItem), typeof(IdempotencyRecord) })
+        foreach (var type in new[] { typeof(User), typeof(Product), typeof(Order), typeof(OrderItem), typeof(IdempotencyRecord) })
         {
             var b = modelBuilder.Entity(type);
             // EF generates the UUID client-side (sequential, index-friendly) unless one is set explicitly.
@@ -98,6 +113,7 @@ public class OrderDbContext(DbContextOptions<OrderDbContext> options) : DbContex
         }
 
         // Soft-deleted rows are invisible to every query unless IgnoreQueryFilters() is used.
+        modelBuilder.Entity<User>().HasQueryFilter(u => !u.IsDeleted);
         modelBuilder.Entity<Product>().HasQueryFilter(p => !p.IsDeleted);
         modelBuilder.Entity<Order>().HasQueryFilter(o => !o.IsDeleted);
         modelBuilder.Entity<OrderItem>().HasQueryFilter(i => !i.IsDeleted);

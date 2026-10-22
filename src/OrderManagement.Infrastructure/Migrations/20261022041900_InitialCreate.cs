@@ -36,6 +36,28 @@ namespace OrderManagement.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "mUser",
+                columns: table => new
+                {
+                    uidUserUUID = table.Column<Guid>(type: "uuid", nullable: false),
+                    txtUsername = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
+                    txtDisplayName = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    txtPasswordHash = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false),
+                    txtRole = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
+                    bolActive = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
+                    bolDeleted = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
+                    dtInserted = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()"),
+                    txtInsertedBy = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false, defaultValue: ""),
+                    dtUpdated = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    txtUpdatedBy = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_mUser", x => x.uidUserUUID);
+                    table.CheckConstraint("CK_mUser_txtRole", "\"txtRole\" IN ('Admin','Sales')");
+                });
+
+            migrationBuilder.CreateTable(
                 name: "trIdempotencyKey",
                 columns: table => new
                 {
@@ -129,6 +151,20 @@ namespace OrderManagement.Infrastructure.Migrations
                 });
 
             migrationBuilder.CreateIndex(
+                name: "UX_mProduct_txtName",
+                table: "mProduct",
+                column: "txtName",
+                unique: true,
+                filter: "\"bolDeleted\" = false");
+
+            migrationBuilder.CreateIndex(
+                name: "UX_mUser_txtUsername",
+                table: "mUser",
+                column: "txtUsername",
+                unique: true,
+                filter: "\"bolDeleted\" = false");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_trIdempotencyKey_dtInserted",
                 table: "trIdempotencyKey",
                 column: "dtInserted");
@@ -175,6 +211,9 @@ namespace OrderManagement.Infrastructure.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropTable(
+                name: "mUser");
+
             migrationBuilder.DropTable(
                 name: "trIdempotencyKey");
 

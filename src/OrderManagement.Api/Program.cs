@@ -1,17 +1,22 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using FluentValidation;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OrderManagement.Api.Common;
 using OrderManagement.Api.Common.Errors;
 using OrderManagement.Api.Common.Logging;
 using OrderManagement.Api.Common.Validation;
+using OrderManagement.Api.Features.Auth;
 using OrderManagement.Api.Features.Demo;
 using OrderManagement.Api.Features.Orders;
+using OrderManagement.Api.Features.Products;
+using OrderManagement.Domain;
 using OrderManagement.Infrastructure;
 using Scalar.AspNetCore;
 using Serilog;
+using Serilog.Context;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,7 +38,12 @@ builder.Services.AddHealthChecks().AddNpgSql(connectionString);
 
 // ---- Application ----
 builder.Services.AddScoped<OrderService>();
+builder.Services.AddScoped<ProductService>();
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
+
+// ---- Security: JWT bearer, every endpoint requires login unless marked anonymous ----
+builder.Services.AddJwtAuthentication(builder.Configuration);
+builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 
 // ---- Web ----
 builder.Services
@@ -82,7 +92,7 @@ builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = 
     problem.Extensions.Remove("traceId");
 });
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options => options.AddDocumentTransformer<BearerSecuritySchemeTransformer>());
 
 var app = builder.Build();
 
@@ -91,6 +101,8 @@ if (app.Configuration.GetValue<bool>("Database:MigrateOnStartup"))
     await using var scope = app.Services.CreateAsyncScope();
     await scope.ServiceProvider.GetRequiredService<OrderDbContext>().Database.MigrateAsync();
 }
+if (app.Configuration.GetValue<bool>("Database:SeedDemoUsers"))
+    await DemoUserSeeder.SeedAsync(app.Services);
 
 // Order matters: the correlation id must exist before anything logs, and request logging wraps the
 // exception handler so the logged status code is the one the client actually received.
@@ -105,6 +117,7 @@ app.UseSerilogRequestLogging(options =>
         diagnostics.Set("UserAgent", http.Request.Headers.UserAgent.ToString());
         if (http.Request.Headers.TryGetValue(OrdersController.IdempotencyKeyHeader, out var key))
             diagnostics.Set("IdempotencyKey", key.ToString());
+        diagnostics.Set("UserName", http.User.Identity?.Name ?? "anonymous");
     };
 });
 app.UseExceptionHandler();
@@ -114,15 +127,24 @@ app.UseStatusCodePages();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+app.UseAuthentication();
+app.UseAuthorization();
+// Every log line written while handling the request carries the signed-in user.
+app.Use(async (context, next) =>
+{
+    using (LogContext.PushProperty("UserName", context.User.Identity?.Name ?? "anonymous"))
+        await next(context);
+});
+
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference();
+    app.MapOpenApi().AllowAnonymous();
+    app.MapScalarApiReference().AllowAnonymous();
     app.MapDemoEndpoints();
 }
 
 app.MapControllers();
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health").AllowAnonymous();
 
 app.Run();
 

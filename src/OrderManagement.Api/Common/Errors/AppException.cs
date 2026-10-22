@@ -25,6 +25,10 @@ public abstract class AppException(int statusCode, string errorCode, string titl
 public sealed class BadRequestException(string errorCode, string detail)
     : AppException(StatusCodes.Status400BadRequest, errorCode, "Bad request", detail);
 
+/// <summary>401 — credentials are missing or wrong.</summary>
+public sealed class UnauthorizedException(string errorCode, string detail)
+    : AppException(StatusCodes.Status401Unauthorized, errorCode, "Unauthorized", detail);
+
 /// <summary>404 — the addressed resource does not exist.</summary>
 public sealed class NotFoundException(string errorCode, string detail)
     : AppException(StatusCodes.Status404NotFound, errorCode, "Resource not found", detail);

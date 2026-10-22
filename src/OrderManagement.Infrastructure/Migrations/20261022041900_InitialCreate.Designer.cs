@@ -12,7 +12,7 @@ using OrderManagement.Infrastructure;
 namespace OrderManagement.Infrastructure.Migrations
 {
     [DbContext(typeof(OrderDbContext))]
-    [Migration("20261022034437_InitialCreate")]
+    [Migration("20261022041900_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -28,6 +28,7 @@ namespace OrderManagement.Infrastructure.Migrations
             modelBuilder.Entity("OrderManagement.Domain.IdempotencyRecord", b =>
                 {
                     b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("uidIdempotencyKeyUUID");
 
@@ -104,6 +105,7 @@ namespace OrderManagement.Infrastructure.Migrations
             modelBuilder.Entity("OrderManagement.Domain.Order", b =>
                 {
                     b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("uidOrderUUID");
 
@@ -189,6 +191,7 @@ namespace OrderManagement.Infrastructure.Migrations
             modelBuilder.Entity("OrderManagement.Domain.OrderItem", b =>
                 {
                     b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("uidOrderItemUUID");
 
@@ -270,6 +273,7 @@ namespace OrderManagement.Infrastructure.Migrations
             modelBuilder.Entity("OrderManagement.Domain.Product", b =>
                 {
                     b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid")
                         .HasColumnName("uidProductUUID");
 
@@ -321,6 +325,11 @@ namespace OrderManagement.Infrastructure.Migrations
 
                     b.HasKey("Id")
                         .HasName("PK_mProduct");
+
+                    b.HasIndex("Name")
+                        .IsUnique()
+                        .HasDatabaseName("UX_mProduct_txtName")
+                        .HasFilter("\"bolDeleted\" = false");
 
                     b.ToTable("mProduct", null, t =>
                         {
@@ -384,6 +393,82 @@ namespace OrderManagement.Infrastructure.Migrations
                             Name = "Minyak Goreng 2L",
                             Price = 38000m,
                             StockQuantity = 200
+                        });
+                });
+
+            modelBuilder.Entity("OrderManagement.Domain.User", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid")
+                        .HasColumnName("uidUserUUID");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("txtDisplayName");
+
+                    b.Property<DateTimeOffset>("InsertedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("dtInserted")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<string>("InsertedBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasDefaultValue("")
+                        .HasColumnName("txtInsertedBy");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true)
+                        .HasColumnName("bolActive");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("bolDeleted");
+
+                    b.Property<string>("PasswordHash")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("txtPasswordHash");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("txtRole");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("dtUpdated");
+
+                    b.Property<string>("UpdatedBy")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("txtUpdatedBy");
+
+                    b.Property<string>("Username")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("txtUsername");
+
+                    b.HasKey("Id")
+                        .HasName("PK_mUser");
+
+                    b.HasIndex("Username")
+                        .IsUnique()
+                        .HasDatabaseName("UX_mUser_txtUsername")
+                        .HasFilter("\"bolDeleted\" = false");
+
+                    b.ToTable("mUser", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_mUser_txtRole", "\"txtRole\" IN ('Admin','Sales')");
                         });
                 });
 

@@ -2,10 +2,6 @@ body {
   background-color: var(--bs-tertiary-bg);
 }
 
-.user-box {
-  width: 13rem;
-}
-
 .item-row .item-qty {
   width: 6rem;
   flex: 0 0 auto;
@@ -49,8 +45,12 @@ code {
   white-space: nowrap;
 }
 
-@media (max-width: 575.98px) {
-  .user-box {
-    width: 100%;
-  }
+/* Role-based visibility: the server enforces permissions, this only hides what the user cannot use. */
+body:not(.role-admin) .admin-only {
+  display: none !important;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 24rem;
 }

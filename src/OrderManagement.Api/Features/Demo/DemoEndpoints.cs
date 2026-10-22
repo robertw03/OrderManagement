@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using OrderManagement.Api.Common.Errors;
+using OrderManagement.Api.Features.Auth;
 using OrderManagement.Infrastructure;
 
 namespace OrderManagement.Api.Features.Demo;
@@ -10,13 +11,15 @@ namespace OrderManagement.Api.Features.Demo;
 /// </summary>
 public static class DemoEndpoints
 {
-    public static void MapDemoEndpoints(this IEndpointRouteBuilder app)
+    public static void MapDemoEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        app.MapPost("/api/demo/reset", ResetAsync)
+        var demo = endpoints.MapGroup("/api/demo").RequireAuthorization(policy => policy.RequireRole(Roles.Admin));
+
+        demo.MapPost("/reset", ResetAsync)
             .WithTags("Demo")
             .WithSummary("Delete all orders and restore seeded product stock (Development only).");
 
-        app.MapPut("/api/demo/products/{id:guid}/stock", SetStockAsync)
+        demo.MapPut("/products/{id:guid}/stock", SetStockAsync)
             .WithTags("Demo")
             .WithSummary("Set a product's stock, e.g. back to 15 before replaying Scenario A (Development only).");
     }

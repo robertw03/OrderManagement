@@ -21,6 +21,22 @@ CREATE TABLE "mProduct" (
     CONSTRAINT "CK_mProduct_intStockQuantity" CHECK ("intStockQuantity" >= 0)
 );
 
+CREATE TABLE "mUser" (
+    "uidUserUUID" uuid NOT NULL,
+    "txtUsername" character varying(100) NOT NULL,
+    "txtDisplayName" character varying(200) NOT NULL,
+    "txtPasswordHash" character varying(500) NOT NULL,
+    "txtRole" character varying(20) NOT NULL,
+    "bolActive" boolean NOT NULL DEFAULT TRUE,
+    "bolDeleted" boolean NOT NULL DEFAULT FALSE,
+    "dtInserted" timestamp with time zone NOT NULL DEFAULT (now()),
+    "txtInsertedBy" character varying(100) NOT NULL DEFAULT '',
+    "dtUpdated" timestamp with time zone,
+    "txtUpdatedBy" character varying(100),
+    CONSTRAINT "PK_mUser" PRIMARY KEY ("uidUserUUID"),
+    CONSTRAINT "CK_mUser_txtRole" CHECK ("txtRole" IN ('Admin','Sales'))
+);
+
 CREATE TABLE "trIdempotencyKey" (
     "uidIdempotencyKeyUUID" uuid NOT NULL,
     "txtCustomerId" character varying(64) NOT NULL,
@@ -85,6 +101,10 @@ VALUES ('a1000000-0000-4000-8000-000000000004', TIMESTAMPTZ '2026-10-22T00:00:00
 INSERT INTO "mProduct" ("uidProductUUID", "dtInserted", "txtInsertedBy", "bolActive", "bolDeleted", "txtName", "decPrice", "intStockQuantity", "dtUpdated", "txtUpdatedBy")
 VALUES ('a1000000-0000-4000-8000-000000000005', TIMESTAMPTZ '2026-10-22T00:00:00+00:00', 'seed', TRUE, FALSE, 'Minyak Goreng 2L', 38000.0, 200, NULL, NULL);
 
+CREATE UNIQUE INDEX "UX_mProduct_txtName" ON "mProduct" ("txtName") WHERE "bolDeleted" = false;
+
+CREATE UNIQUE INDEX "UX_mUser_txtUsername" ON "mUser" ("txtUsername") WHERE "bolDeleted" = false;
+
 CREATE INDEX "IX_trIdempotencyKey_dtInserted" ON "trIdempotencyKey" ("dtInserted");
 
 CREATE UNIQUE INDEX "UX_trIdempotencyKey_txtCustomerId_txtIdempotencyKey" ON "trIdempotencyKey" ("txtCustomerId", "txtIdempotencyKey");
@@ -102,7 +122,7 @@ CREATE INDEX "IX_trOrderItem_uidProductUUID" ON "trOrderItem" ("uidProductUUID")
 CREATE UNIQUE INDEX "UX_trOrderItem_uidOrderUUID_uidProductUUID" ON "trOrderItem" ("uidOrderUUID", "uidProductUUID");
 
 INSERT INTO "__EFMigrationsHistory" ("MigrationId", "ProductVersion")
-VALUES ('20261022034437_InitialCreate', '10.0.13');
+VALUES ('20261022041900_InitialCreate', '10.0.13');
 
 COMMIT;
 

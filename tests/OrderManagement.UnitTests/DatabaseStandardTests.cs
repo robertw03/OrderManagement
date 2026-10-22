@@ -48,6 +48,6 @@ public sealed class DatabaseStandardTests
     public void Expected_tables_exist()
     {
         Db.Model.GetEntityTypes().Select(e => e.GetTableName())
-            .Should().BeEquivalentTo("mProduct", "trOrder", "trOrderItem", "trIdempotencyKey");
+            .Should().BeEquivalentTo("mUser", "mProduct", "trOrder", "trOrderItem", "trIdempotencyKey");
     }
 }

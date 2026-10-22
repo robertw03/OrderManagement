@@ -9,6 +9,11 @@ public static class ErrorCodes
     public const string IdempotencyKeyInvalid = "IDEMPOTENCY_KEY_INVALID";
     public const string BadRequest = "BAD_REQUEST";
 
+    // 401 / 403
+    public const string Unauthorized = "UNAUTHORIZED";
+    public const string InvalidCredentials = "INVALID_CREDENTIALS";
+    public const string Forbidden = "FORBIDDEN";
+
     // 404
     public const string NotFound = "NOT_FOUND";
     public const string OrderNotFound = "ORDER_NOT_FOUND";
@@ -20,6 +25,7 @@ public static class ErrorCodes
     public const string VersionMismatch = "VERSION_MISMATCH";
     public const string IdempotencyRequestInProgress = "IDEMPOTENCY_REQUEST_IN_PROGRESS";
     public const string Conflict = "CONFLICT";
+    public const string ProductNameTaken = "PRODUCT_NAME_TAKEN";
 
     // 422
     public const string InvalidStatusTransition = "INVALID_STATUS_TRANSITION";
@@ -34,6 +40,8 @@ public static class ErrorCodes
     public static string FromStatusCode(int statusCode) => statusCode switch
     {
         StatusCodes.Status400BadRequest => ValidationFailed,
+        StatusCodes.Status401Unauthorized => Unauthorized,
+        StatusCodes.Status403Forbidden => Forbidden,
         StatusCodes.Status404NotFound => NotFound,
         StatusCodes.Status409Conflict => Conflict,
         >= 500 => InternalError,
