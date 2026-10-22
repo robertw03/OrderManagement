@@ -423,7 +423,7 @@ Contoh tracing satu request yang gagal:
 
 ## 10. Testing
 
-**93 test** (46 unit + 47 integrasi). Integration test menjalankan API sungguhan (`WebApplicationFactory`) terhadap
+**95 test** (46 unit + 49 integrasi). Integration test menjalankan API sungguhan (`WebApplicationFactory`) terhadap
 **PostgreSQL sungguhan** — concurrency bergantung pada locking database, sehingga provider in-memory/SQLite tidak
 akan membuktikan apa pun. Request concurrent dilepas bersamaan dengan *start gate* (`TaskCompletionSource`) agar
 benar-benar tumpang tindih di database.
@@ -445,7 +445,7 @@ benar-benar tumpang tindih di database.
 
 **Fungsional & kontrak error** ([`OrderApiTests`](tests/OrderManagement.IntegrationTests/OrderApiTests.cs),
 [`ProductApiTests`](tests/OrderManagement.IntegrationTests/ProductApiTests.cs)): lifecycle status, cancel mengembalikan
-stock (lewat kedua endpoint), rollback order multi-item, replay idempotency, filter + pagination, kolom audit,
+stock (lewat kedua endpoint), rollback order multi-item, replay idempotency (termasuk retry setelah gagal & validasi panjang key), filter + pagination, kolom audit,
 produk nonaktif/terhapus, CRUD produk, format error 400/404/409/422 dan correlation ID.
 
 **Auth** ([`AuthTests`](tests/OrderManagement.IntegrationTests/AuthTests.cs)): login berhasil/gagal (pesan identik

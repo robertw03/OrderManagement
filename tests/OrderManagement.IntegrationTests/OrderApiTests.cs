@@ -285,6 +285,48 @@ public sealed class OrderApiTests(ApiFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Idempotency_key_longer_than_100_characters_is_400_and_100_is_accepted()
+    {
+        var tooLong = await _client.PostOrderAsync(Order("CUST-1", (Indomie, 1)), new string('k', 101));
+        tooLong.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await tooLong.ErrorCodeAsync()).Should().Be("IDEMPOTENCY_KEY_INVALID");
+
+        var maxLength = await _client.PostOrderAsync(Order("CUST-1", (Indomie, 1)), new string('k', 100));
+        maxLength.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        await using var db = fixture.CreateDbContext();
+        (await db.Orders.CountAsync()).Should().Be(1, "the rejected request must not create anything");
+    }
+
+    [Fact]
+    public async Task Retry_with_same_key_after_a_failed_request_is_processed_normally()
+    {
+        var key = Guid.NewGuid().ToString();
+        await fixture.SetStockAsync(Aqua, 1);
+
+        var failed = await _client.PostOrderAsync(Order("CUST-1", (Aqua, 2)), key);
+        failed.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await failed.ErrorCodeAsync()).Should().Be("INSUFFICIENT_STOCK");
+
+        // Stock arrives; the client retries the very same request with the very same key.
+        await fixture.SetStockAsync(Aqua, 10);
+        var retry = await _client.PostOrderAsync(Order("CUST-1", (Aqua, 2)), key);
+
+        retry.StatusCode.Should().Be(HttpStatusCode.Created);
+        retry.Headers.Contains("Idempotent-Replayed").Should().BeFalse("the failed attempt left nothing to replay");
+        (await fixture.GetStockAsync(Aqua)).Should().Be(8);
+
+        // A further retry is now a replay of the successful order.
+        var again = await _client.PostOrderAsync(Order("CUST-1", (Aqua, 2)), key);
+        again.Headers.GetValues("Idempotent-Replayed").Should().Equal("true");
+        (await fixture.GetStockAsync(Aqua)).Should().Be(8);
+
+        await using var db = fixture.CreateDbContext();
+        (await db.Orders.CountAsync()).Should().Be(1);
+        (await db.IdempotencyRecords.CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
     public async Task Validation_errors_are_400_with_field_level_details()
     {
         var response = await _client.PostOrderAsync(new CreateOrderRequest
