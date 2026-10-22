@@ -151,7 +151,7 @@ public sealed class OrderApiTests(ApiFixture fixture) : IAsyncLifetime
     public async Task List_filters_by_status_customer_and_date_and_paginates()
     {
         for (var i = 0; i < 5; i++)
-            await _client.CreateOrderAsync(Order("CUST-L", (Indomie, 1)));
+            await _client.CreateOrderAsync(Order("CUST-L", (Indomie, i + 1)));
         var other = await _client.CreateOrderAsync(Order("CUST-OTHER", (Indomie, 1)));
         await _client.CancelAsync(other.Id);
 

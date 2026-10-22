@@ -17,6 +17,7 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value) || 
 const PRODUCT_X = 'a1000000-0000-4000-8000-000000000001';
 const INDOMIE = 'a1000000-0000-4000-8000-000000000002';
 const AQUA = 'a1000000-0000-4000-8000-000000000003';
+const MINYAK = 'a1000000-0000-4000-8000-000000000005';
 
 const STATUS_STYLE = {
   Pending: 'secondary', Confirmed: 'info', Shipped: 'primary', Delivered: 'success', Cancelled: 'danger'
@@ -115,7 +116,8 @@ const state = {
   orderKey: newId(),
   query: { page: 1, pageSize: 10 },
   detailOrderId: null,
-  started: false
+  started: false,
+  submitting: false
 };
 
 // ---------------------------------------------------------------- login / session
@@ -396,38 +398,84 @@ function showOrderFieldErrors(errors) {
 $('#f-add-item').addEventListener('click', () => addItemRow(state.products.find(p => p.isActive)?.id));
 $('#f-new-key').addEventListener('click', () => { state.orderKey = newId(); renderKey(); });
 
-// The submit button is intentionally NOT disabled: double clicks send the same Idempotency-Key and the
-// server returns the same order (replay), which is exactly the behaviour this prototype demonstrates.
-$('#order-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  clearFormErrors(event.currentTarget);
+function resetOrderItems() {
+  $('#f-items').replaceChildren();
+  addItemRow(state.products.find(p => p.isActive)?.id, 1);
+}
+
+/**
+ * Double-submit protection, client side: the button is locked while a request is in flight and the items
+ * are cleared after success, so a stray second click cannot resend the same order. The Idempotency-Key
+ * (kept until success) covers network retries; the server's duplicate window covers everything else.
+ */
+async function submitOrder(confirmDuplicate = false) {
+  const button = $('#f-submit');
+  if (state.submitting) return;
+  state.submitting = true;
+  clearFormErrors($('#order-form'));
   const key = state.orderKey;
+
+  setBusy(button, true);
   const res = await api.createOrder({
     customerId: $('#f-customer').value.trim(),
     shippingAddress: $('#f-address').value.trim(),
-    items: readItems()
+    items: readItems(),
+    confirmDuplicate
   }, key);
+  setBusy(button, false);
+  state.submitting = false;
 
   if (res.ok) {
     const replayed = res.headers.get('Idempotent-Replayed') === 'true';
     toast(replayed
-      ? `<i class="bi bi-arrow-repeat me-1"></i>Request duplikat terdeteksi — order <strong>${shortId(res.data.id)}</strong> dikembalikan tanpa membuat order baru.`
+      ? `<i class="bi bi-arrow-repeat me-1"></i>Request ini sudah pernah diproses — order <strong>${shortId(res.data.id)}</strong> dikembalikan tanpa membuat order baru.`
       : `<i class="bi bi-check-circle me-1"></i>Order <strong>${shortId(res.data.id)}</strong> dibuat · ${rupiah.format(res.data.totalAmount)}`,
       replayed ? 'info' : 'success');
-    if (state.orderKey === key) {
-      state.orderKey = newId();
-      renderKey();
-    }
+    state.orderKey = newId();
+    renderKey();
+    resetOrderItems();
     await Promise.all([loadOrders(), loadProducts()]);
     return;
   }
 
+  if (res.data?.errorCode === 'POSSIBLE_DUPLICATE_ORDER') {
+    askDuplicate(res.data);
+    return;
+  }
   if (res.status === 400 && res.data?.errors) showOrderFieldErrors(res.data.errors);
   problemToast(res);
   if (res.data?.errorCode === 'IDEMPOTENCY_KEY_REUSED') {
     state.orderKey = newId();
     renderKey();
   }
+}
+
+const duplicateModal = new bootstrap.Modal('#duplicate-modal');
+
+function askDuplicate(problem) {
+  const seconds = Math.max(1, Math.round((Date.now() - new Date(problem.duplicateCreatedAt)) / 1000));
+  $('#dup-body').innerHTML = `
+    <p class="mb-2">Order dengan isi yang <strong>sama persis</strong> untuk customer ini baru saja dibuat
+      <strong>${seconds} detik lalu</strong> oleh <strong>${esc(problem.duplicateCreatedBy)}</strong>.</p>
+    <p class="mb-0 small text-body-secondary">Order sebelumnya: <span class="order-id">${esc(problem.duplicateOfOrderId)}</span><br>
+      Kemungkinan ini klik ganda. Tetap buat order kedua?</p>`;
+  $('#dup-view').dataset.orderId = problem.duplicateOfOrderId;
+  duplicateModal.show();
+}
+
+$('#dup-confirm').addEventListener('click', async () => {
+  duplicateModal.hide();
+  await submitOrder(true);
+});
+$('#dup-view').addEventListener('click', () => {
+  const id = $('#dup-view').dataset.orderId;
+  $('#duplicate-modal').addEventListener('hidden.bs.modal', () => showDetail(id), { once: true });
+  duplicateModal.hide();
+});
+
+$('#order-form').addEventListener('submit', event => {
+  event.preventDefault();
+  submitOrder();
 });
 
 // ---------------------------------------------------------------- orders list
@@ -651,6 +699,7 @@ const concurrently = (count, makeRequest) => Promise.all(Array.from({ length: co
 const me = () => esc(session.user?.username);
 
 async function scenarioA() {
+  const run = newId().slice(0, 6);
   const buyers = clamp($('#sim-a-count').value, 2, 30);
   const initialStock = 15;
   const perOrder = 10;
@@ -664,12 +713,12 @@ async function scenarioA() {
   }
 
   const results = await concurrently(buyers, i => api.createOrder({
-    customerId: `SIM-A-${i + 1}`,
+    customerId: `SIM-A-${run}-${i + 1}`,
     shippingAddress: 'Simulasi Skenario A',
     items: [{ productId: PRODUCT_X, quantity: perOrder }]
   }, newId()));
 
-  results.forEach((res, i) => sim.row(`POST /orders · ${me()} · customer SIM-A-${i + 1} · ${perOrder} unit`, res,
+  results.forEach((res, i) => sim.row(`POST /orders · ${me()} · customer SIM-A-${run}-${i + 1} · ${perOrder} unit`, res,
     res.ok ? `Order ${shortId(res.data.id)}` : undefined));
 
   const finalStock = await stockOf(PRODUCT_X);
@@ -683,10 +732,11 @@ async function scenarioA() {
 }
 
 async function scenarioB() {
+  const run = newId().slice(0, 6);
   sim.start('Skenario B — Ship vs Cancel bersamaan');
 
   const created = await api.createOrder({
-    customerId: 'SIM-B', shippingAddress: 'Simulasi Skenario B', items: [{ productId: INDOMIE, quantity: 1 }]
+    customerId: `SIM-B-${run}`, shippingAddress: 'Simulasi Skenario B', items: [{ productId: INDOMIE, quantity: 1 }]
   }, newId());
   sim.row('<span class="text-body-secondary">setup:</span> POST /orders', created, created.ok ? `v${created.data.version} Pending` : undefined);
   if (!created.ok) {
@@ -721,13 +771,14 @@ async function scenarioB() {
 }
 
 async function scenarioC() {
+  const run = newId().slice(0, 6);
   const count = clamp($('#sim-c-count').value, 2, 30);
   const quantity = 2;
   const key = newId();
   sim.start(`Skenario C — ${count} request dengan Idempotency-Key yang sama`);
 
   const stockBefore = await stockOf(AQUA);
-  const body = { customerId: 'SIM-C', shippingAddress: 'Simulasi Skenario C', items: [{ productId: AQUA, quantity }] };
+  const body = { customerId: `SIM-C-${run}`, shippingAddress: 'Simulasi Skenario C', items: [{ productId: AQUA, quantity }] };
   const results = await concurrently(count, () => api.createOrder(body, key));
 
   results.forEach(res => {
@@ -745,7 +796,29 @@ async function scenarioC() {
   sim.verdict(passed, passed ? 'Lulus — 1 order, stock dipotong sekali' : 'Gagal — lihat detail request');
 }
 
-const scenarios = { a: scenarioA, b: scenarioB, c: scenarioC };
+async function scenarioD() {
+  const run = newId().slice(0, 6);
+  const clicks = clamp($('#sim-d-count').value, 2, 30);
+  const quantity = 1;
+  sim.start(`Skenario D — ${clicks} klik dengan isi sama tapi Idempotency-Key berbeda`);
+
+  const stockBefore = await stockOf(MINYAK);
+  const body = { customerId: `SIM-D-${run}`, shippingAddress: 'Simulasi Skenario D', items: [{ productId: MINYAK, quantity }] };
+  const results = await concurrently(clicks, () => api.createOrder(body, newId()));
+
+  results.forEach((res, i) => sim.row(`POST /orders · ${me()} · klik ${i + 1} (key baru)`, res,
+    res.ok ? `Order ${shortId(res.data.id)} <span class="badge text-bg-success">baru</span>` : undefined));
+
+  const stockAfter = await stockOf(MINYAK);
+  const created = results.filter(r => r.status === 201).length;
+  const flagged = results.filter(r => r.data?.errorCode === 'POSSIBLE_DUPLICATE_ORDER').length;
+  const passed = created === 1 && flagged === clicks - 1 && stockBefore - stockAfter === quantity;
+
+  sim.facts([['Klik', clicks], ['Order dibuat', created], ['Ditahan 409', flagged], ['Stock Minyak', `${stockBefore} → ${stockAfter}`]]);
+  sim.verdict(passed, passed ? 'Lulus — 1 order, sisanya ditahan sebagai kemungkinan duplikat' : 'Gagal — lihat detail request');
+}
+
+const scenarios = { a: scenarioA, b: scenarioB, c: scenarioC, d: scenarioD };
 $$('[data-sim]').forEach(button => button.addEventListener('click', async () => {
   $$('[data-sim]').forEach(b => { b.disabled = true; });
   try {
@@ -783,5 +856,6 @@ if (session.token) {
 } else {
   showLogin();
 }
+
 
 

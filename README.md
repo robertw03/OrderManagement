@@ -5,7 +5,7 @@ rewrite sistem order klien distribusi. Fokus utamanya adalah empat masalah di si
 
 | Masalah di sistem lama | Solusi di prototype ini |
 |---|---|
-| Double order karena user klik *Submit* berkali-kali | Header `Idempotency-Key` + unique index di database ([§5](#5-idempotency)) |
+| Double order karena user klik *Submit* berkali-kali | Header `Idempotency-Key` + unique index, ditambah deteksi order identik dengan key berbeda ([§5](#5-idempotency)) |
 | Stock minus karena dua order masuk bersamaan | *Atomic conditional UPDATE* + `CHECK` constraint ([§6.1](#61-skenario-a--concurrent-stock-deduction)) |
 | Status order tidak konsisten saat banyak admin update | *Optimistic concurrency* (version) dengan *compare-and-swap* ([§6.2](#62-skenario-b--concurrent-status-update)) |
 | Sulit tracing error | Serilog *structured logging* + Correlation ID & user di setiap log & response ([§9](#9-logging--tracing)) |
@@ -75,11 +75,12 @@ oleh API yang sama dan **hanya memanggil REST API publik** — tidak ada logic b
 | **Login** | Username/password → token JWT disimpan di `sessionStorage`; daftar akun demo bisa diklik untuk mengisi form |
 | **Orders** | Cari order berdasarkan ID (Get Order), form buat order (multi item, estimasi total, Idempotency-Key otomatis), daftar order dengan filter status/customer/tanggal + pagination, detail order, tombol transisi status sesuai `allowedNextStatuses` dari API **dan** role user |
 | **Produk** | Stock per produk (auto refresh). Admin: tambah produk, edit nama/harga/status aktif, atur stock (masuk/keluar), hapus (soft delete) |
-| **Simulasi Concurrency** *(Admin)* | Satu klik menjalankan Skenario A, B, dan C memakai **token user yang sedang login**: request dikirim **bersamaan** dari browser, lalu hasilnya diverifikasi dan ditampilkan (status HTTP, error code, waktu, correlation ID tiap request) |
+| **Simulasi Concurrency** *(Admin)* | Satu klik menjalankan Skenario A, B, C, dan D (klik ganda dengan key berbeda) memakai **token user yang sedang login**: request dikirim **bersamaan** dari browser, lalu hasilnya diverifikasi dan ditampilkan (status HTTP, error code, waktu, correlation ID tiap request) |
 
 Detail yang bisa didemokan:
-- Tombol *Submit* sengaja **tidak** di-disable: klik berkali-kali mengirim `Idempotency-Key` yang sama dan
-  muncul notifikasi "request duplikat terdeteksi" — tetap satu order.
+- Proteksi double order berlapis (lihat [§5](#5-idempotency)): tombol *Submit* terkunci selama request berjalan dan
+  item dikosongkan setelah berhasil; bila order yang sama persis tetap terkirim lagi dalam 60 detik, muncul dialog
+  "Kemungkinan order ganda" dengan pilihan lihat order sebelumnya / batal / tetap buat.
 - User yang login tercatat di kolom audit (`txtInsertedBy`/`txtUpdatedBy`) dan di setiap baris log.
 - Skenario B dari dua tab: login sebagai `admin` di satu tab dan `admin2` di tab lain, ubah order yang sama —
   yang kedua mendapat 409, dan detail order menunjukkan siapa yang menang.
@@ -220,8 +221,15 @@ produknya sudah dinonaktifkan/dihapus setelah order dibuat.
 
 ## 5. Idempotency
 
-**Strategi: header `Idempotency-Key` (wajib) di-scope per `customerId`, disimpan di tabel `trIdempotencyKey`
-dengan unique index, ditambah hash payload.**
+**Strategi: tiga lapis.**
+
+| Lapis | Menangani | Mekanisme |
+|---|---|---|
+| 1. UI | Klik ganda manual | Tombol terkunci selama request berjalan, item form dikosongkan setelah sukses |
+| 2. **Idempotency-Key** (utama) | Retry jaringan, double-submit, request bersamaan dengan key sama (Skenario C) | Header wajib, di-scope per `customerId`, di-*claim* via unique index di `trIdempotencyKey` → replay respons yang sama |
+| 3. **Deteksi duplikat isi** (jaring pengaman) | Client yang membuat key baru per klik, atau klik kedua setelah order pertama sukses | Hash payload yang sama + customer sama + key berbeda dalam 60 detik → `409 POSSIBLE_DUPLICATE_ORDER`, kecuali dikirim ulang dengan `"confirmDuplicate": true` |
+
+### 5.1 Idempotency-Key
 
 Alur `POST /api/orders`:
 
@@ -252,6 +260,30 @@ pola standar industri (Stripe, draft IETF *Idempotency-Key HTTP Header*). Hash p
 **pelengkap** untuk mendeteksi penyalahgunaan key.
 
 **Kenapa di-scope per customer?** Supaya key dari customer A tidak pernah bisa bertabrakan / membaca order customer B.
+
+**Kenapa duplikat dijawab replay (201), bukan error?** Client tidak bisa membedakan "request pertama hilang di jaringan"
+dari "request pertama sudah diproses tapi respons hilang". Replay selalu menjawab jujur: *ini order kamu* — client
+tidak akan mengira order gagal lalu membuat order lain.
+
+### 5.2 Deteksi duplikat isi (key berbeda)
+
+Idempotency-Key hanya bekerja bila client mengirim key yang sama. Bila client keliru membuat key baru setiap klik,
+atau user menekan *Submit* lagi setelah order pertama selesai, server menerima dua "niat" berbeda. Lapis ini memakai
+hash payload yang sudah dihitung untuk Idempotency-Key:
+
+```
+customer sama + hash isi order sama + key berbeda + order sebelumnya belum Cancelled + dibuat ≤ 60 detik lalu
+  → 409 POSSIBLE_DUPLICATE_ORDER { duplicateOfOrderId, duplicateCreatedAt, duplicateCreatedBy, windowSeconds }
+```
+
+- Order identik yang **memang disengaja** cukup dikirim ulang dengan `"confirmDuplicate": true` (UI menampilkan
+  dialog konfirmasi). Flag ini tidak ikut di-hash, jadi boleh memakai key yang sama dengan percobaan yang ditolak.
+- **Aman terhadap race**: setelah key di-claim, transaksi mengambil `pg_advisory_xact_lock` **per customer**, sehingga dua
+  order identik dengan key berbeda yang tiba bersamaan diproses bergantian — yang kedua pasti melihat order pertama.
+  Lock hanya per customer (customer lain tidak saling menunggu) dan otomatis lepas saat commit/rollback.
+- Jendela waktu diatur di `Orders:DuplicateWindowSeconds` (default 60, `0` = nonaktif).
+- *Trade-off*: order identik yang sah dalam 60 detik butuh satu konfirmasi tambahan — biaya kecil dibanding double order
+  yang lolos ke gudang.
 
 ---
 
@@ -345,6 +377,7 @@ Karena key di-*claim* **sebelum** stock dikurangi, request duplikat tidak pernah
 | 7 | **Produk dinonaktifkan/dihapus setelah order dibuat, lalu order di-cancel** | Stock tidak kembali karena produk "tidak terlihat" | Restore stock memakai `IgnoreQueryFilters()` | `Cancel_returns_stock_even_if_product_was_deactivated_meanwhile` |
 | 8 | **Admin mengubah stock bersamaan dengan order masuk** (admin membaca stock 50, mengetik 60; sementara itu 5 order mengurangi stock) | *Lost update*: form admin menimpa stock dengan angka absolut yang sudah basi → pengurangan dari order hilang, stock "bertambah" sendiri | Stock produk yang sudah ada **tidak bisa** di-set absolut. Perubahan lewat `POST /products/{id}/stock-adjustments` berisi **delta** (+/−) yang dieksekusi atomic `SET stock = stock + @delta WHERE stock + @delta >= 0`. Edit produk (`PUT`) hanya menulis kolom nama/harga/aktif | `Concurrent_restock_and_orders_never_lose_an_update`, `Update_changes_name_and_price_without_touching_stock`, `Concurrent_stock_removals_never_go_negative` |
 | 9 | **Dua admin menambah produk dengan nama sama bersamaan** | Duplikat master data (cek "nama sudah ada?" lalu insert sama-sama lolos) | Partial unique index `UX_mProduct_txtName WHERE bolDeleted = false`; pelanggaran → `409 PRODUCT_NAME_TAKEN` | `Concurrent_creates_with_the_same_name_produce_exactly_one_product` |
+| 10 | **Order identik dengan Idempotency-Key berbeda tiba bersamaan** (client membuat key per klik) | Pengecekan "ada order sama 60 detik terakhir?" sama-sama lolos → double order | `pg_advisory_xact_lock` per customer di dalam transaksi sebelum pengecekan duplikat ([§5.2](#52-deteksi-duplikat-isi-key-berbeda)) | `Identical_orders_with_different_keys_sent_concurrently_create_exactly_one_order` |
 
 ---
 
@@ -380,6 +413,7 @@ Error validasi menambahkan `errors` per field: `{"errors": {"items[0].quantity":
 | 404 | `ORDER_NOT_FOUND`, `PRODUCT_NOT_FOUND`, `NOT_FOUND` | Resource / route tidak ada |
 | 409 | `INSUFFICIENT_STOCK` | Stock tidak cukup (order, atau pengurangan stock oleh admin) |
 | 409 | `PRODUCT_NAME_TAKEN` | Nama produk sudah dipakai produk lain yang belum dihapus |
+| 409 | `POSSIBLE_DUPLICATE_ORDER` | Order identik untuk customer yang sama baru dibuat ≤ 60 detik lalu dengan key berbeda (kirim ulang dengan `confirmDuplicate: true` bila disengaja) |
 | 409 | `CONCURRENT_MODIFICATION` | Kalah balapan update status (Skenario B) |
 | 409 | `VERSION_MISMATCH` | `expectedVersion` / `If-Match` sudah basi |
 | 422 | `INVALID_STATUS_TRANSITION` | Transisi tidak diizinkan state machine (menyertakan `allowedStatuses`) |
@@ -423,7 +457,7 @@ Contoh tracing satu request yang gagal:
 
 ## 10. Testing
 
-**95 test** (46 unit + 49 integrasi). Integration test menjalankan API sungguhan (`WebApplicationFactory`) terhadap
+**100 test** (46 unit + 54 integrasi). Integration test menjalankan API sungguhan (`WebApplicationFactory`) terhadap
 **PostgreSQL sungguhan** — concurrency bergantung pada locking database, sehingga provider in-memory/SQLite tidak
 akan membuktikan apa pun. Request concurrent dilepas bersamaan dengan *start gate* (`TaskCompletionSource`) agar
 benar-benar tumpang tindih di database.
@@ -442,11 +476,16 @@ benar-benar tumpang tindih di database.
 | `Concurrent_restock_and_orders_never_lose_an_update` | 20 order (−1) dan 20 restock (+1) bersamaan → stock tetap 100, tidak ada update yang hilang |
 | `Concurrent_stock_removals_never_go_negative` | 25 pengurangan stock bersamaan pada stock 10 → tepat 10 berhasil, stock 0 |
 | `Concurrent_creates_with_the_same_name_produce_exactly_one_product` | 8 admin membuat produk bernama sama bersamaan → 1 produk, sisanya `409` |
+| `Identical_orders_with_different_keys_sent_concurrently_create_exactly_one_order` | 10 order identik dengan key berbeda bersamaan → 1 order, sisanya `409 POSSIBLE_DUPLICATE_ORDER` |
 
 **Fungsional & kontrak error** ([`OrderApiTests`](tests/OrderManagement.IntegrationTests/OrderApiTests.cs),
 [`ProductApiTests`](tests/OrderManagement.IntegrationTests/ProductApiTests.cs)): lifecycle status, cancel mengembalikan
 stock (lewat kedua endpoint), rollback order multi-item, replay idempotency (termasuk retry setelah gagal & validasi panjang key), filter + pagination, kolom audit,
 produk nonaktif/terhapus, CRUD produk, format error 400/404/409/422 dan correlation ID.
+
+**Duplikat isi** ([`DuplicateOrderTests`](tests/OrderManagement.IntegrationTests/DuplicateOrderTests.cs)): order identik dengan key
+baru ditahan `409` lalu bisa dikonfirmasi, retry dengan key sama + konfirmasi berhasil, isi/customer berbeda dan order
+yang sudah di-cancel tidak dianggap duplikat.
 
 **Auth** ([`AuthTests`](tests/OrderManagement.IntegrationTests/AuthTests.cs)): login berhasil/gagal (pesan identik
 untuk user tidak ada & password salah), akun nonaktif ditolak, semua endpoint butuh token (`401`), Sales tidak boleh
@@ -467,7 +506,7 @@ Semua endpoint `/api/*` kecuali login butuh `Authorization: Bearer <token>`. Hea
 |---|---|---|---|
 | `POST` | `/api/auth/login` | — | Body `{ "username", "password" }` → `{ accessToken, expiresAt, user }` |
 | `GET` | `/api/auth/me` | semua | User yang sedang login |
-| `POST` | `/api/orders` | semua | Buat order. Header **`Idempotency-Key` wajib**. → `201` + `Location` + `ETag` |
+| `POST` | `/api/orders` | semua | Buat order. Header **`Idempotency-Key` wajib**. Body opsional `"confirmDuplicate": true` (§5.2). → `201` + `Location` + `ETag` |
 | `GET` | `/api/orders/{id}` | semua | Detail order + items. → `200` + `ETag` (= version) |
 | `GET` | `/api/orders?status=&customerId=&from=&to=&page=1&pageSize=20` | semua | List + filter + pagination (`from` inklusif, `to` eksklusif, terbaru dulu, `pageSize` maks 100) |
 | `PATCH` | `/api/orders/{id}/status` | Admin | Body `{ "status": "Confirmed", "expectedVersion": 1 }` (`expectedVersion` opsional, atau header `If-Match`) |

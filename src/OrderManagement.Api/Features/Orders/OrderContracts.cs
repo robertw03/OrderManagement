@@ -9,6 +9,20 @@ public sealed class CreateOrderRequest
     public string CustomerId { get; init; } = string.Empty;
     public string ShippingAddress { get; init; } = string.Empty;
     public List<CreateOrderItemRequest> Items { get; init; } = [];
+
+    /// <summary>
+    /// Set to true to place an order identical to one placed moments ago (otherwise 409 POSSIBLE_DUPLICATE_ORDER).
+    /// Not part of the idempotency hash, so a retry with the same key may add it.
+    /// </summary>
+    public bool ConfirmDuplicate { get; init; }
+}
+
+public sealed class OrderOptions
+{
+    public const string Section = "Orders";
+
+    /// <summary>How long an identical order (same customer and content, different key) is treated as a likely duplicate. 0 disables.</summary>
+    public int DuplicateWindowSeconds { get; set; } = 60;
 }
 
 public sealed class CreateOrderItemRequest

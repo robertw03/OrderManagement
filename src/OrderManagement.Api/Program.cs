@@ -37,6 +37,7 @@ builder.Services.AddInfrastructure(connectionString);
 builder.Services.AddHealthChecks().AddNpgSql(connectionString);
 
 // ---- Application ----
+builder.Services.Configure<OrderOptions>(builder.Configuration.GetSection(OrderOptions.Section));
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<ProductService>();
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();

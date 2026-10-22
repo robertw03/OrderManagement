@@ -112,7 +112,7 @@
                 <div class="small text-body-secondary mb-3">
                   <i class="bi bi-key me-1"></i>Idempotency-Key: <code id="f-key"></code>
                   <button id="f-new-key" type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline">baru</button>
-                  <div class="form-text">Key yang sama dipakai ulang sampai order berhasil — klik Submit berkali-kali tetap menghasilkan satu order.</div>
+                  <div class="form-text">Key yang sama dipakai ulang sampai order berhasil (aman untuk retry). Tombol terkunci selama proses, item dikosongkan setelah berhasil, dan server menanyakan konfirmasi bila order yang sama persis dikirim lagi dalam 60 detik.</div>
                 </div>
                 <button id="f-submit" type="submit" class="btn btn-primary w-100"><i class="bi bi-send me-1"></i>Submit Order</button>
               </form>
@@ -209,7 +209,7 @@
         </div>
 
         <div class="row g-4">
-          <div class="col-lg-4">
+          <div class="col-md-6 col-xl-3">
             <div class="card h-100 shadow-sm">
               <div class="card-body">
                 <h3 class="h6"><span class="badge text-bg-primary me-1">A</span>Concurrent Stock Deduction</h3>
@@ -224,7 +224,7 @@
               </div>
             </div>
           </div>
-          <div class="col-lg-4">
+          <div class="col-md-6 col-xl-3">
             <div class="card h-100 shadow-sm">
               <div class="card-body">
                 <h3 class="h6"><span class="badge text-bg-primary me-1">B</span>Concurrent Status Update</h3>
@@ -234,17 +234,31 @@
               </div>
             </div>
           </div>
-          <div class="col-lg-4">
+          <div class="col-md-6 col-xl-3">
             <div class="card h-100 shadow-sm">
               <div class="card-body">
                 <h3 class="h6"><span class="badge text-bg-primary me-1">C</span>Idempotent Create Under Race</h3>
-                <p class="small text-body-secondary">Simulasi double-click: <strong>beberapa POST dengan Idempotency-Key sama</strong> dikirim bersamaan.
+                <p class="small text-body-secondary">Simulasi retry / double-submit: <strong>beberapa POST dengan Idempotency-Key sama</strong> dikirim bersamaan.
                   Harus tetap hanya satu order dan stock dipotong sekali.</p>
                 <div class="input-group input-group-sm mb-3">
                   <span class="input-group-text">Jumlah request</span>
                   <input id="sim-c-count" type="number" class="form-control" value="5" min="2" max="30">
                 </div>
                 <button class="btn btn-primary btn-sm w-100" data-sim="c"><i class="bi bi-play-fill"></i> Jalankan</button>
+              </div>
+            </div>
+          </div>
+          <div class="col-md-6 col-xl-3">
+            <div class="card h-100 shadow-sm">
+              <div class="card-body">
+                <h3 class="h6"><span class="badge text-bg-primary me-1">D</span>Klik Ganda, Key Berbeda</h3>
+                <p class="small text-body-secondary">Client yang salah membuat <strong>key baru per klik</strong>: order yang <strong>isinya sama</strong> dikirim bersamaan dengan key berbeda.
+                  Lapis kedua (deteksi duplikat) harus tetap menghasilkan satu order; sisanya 409.</p>
+                <div class="input-group input-group-sm mb-3">
+                  <span class="input-group-text">Jumlah klik</span>
+                  <input id="sim-d-count" type="number" class="form-control" value="5" min="2" max="30">
+                </div>
+                <button class="btn btn-primary btn-sm w-100" data-sim="d"><i class="bi bi-play-fill"></i> Jalankan</button>
               </div>
             </div>
           </div>
@@ -279,6 +293,24 @@
         </div>
         <div class="modal-body" id="detail-body"></div>
         <div class="modal-footer" id="detail-actions"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Possible duplicate order -->
+  <div class="modal fade" id="duplicate-modal" tabindex="-1" aria-labelledby="dup-title" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title h5" id="dup-title"><i class="bi bi-files text-warning me-2"></i>Kemungkinan order ganda</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+        </div>
+        <div class="modal-body" id="dup-body"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary me-auto" id="dup-view"><i class="bi bi-eye me-1"></i>Lihat order sebelumnya</button>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+          <button type="button" class="btn btn-warning" id="dup-confirm">Tetap buat order</button>
+        </div>
       </div>
     </div>
   </div>

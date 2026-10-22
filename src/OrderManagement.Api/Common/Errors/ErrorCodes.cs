@@ -26,6 +26,7 @@ public static class ErrorCodes
     public const string IdempotencyRequestInProgress = "IDEMPOTENCY_REQUEST_IN_PROGRESS";
     public const string Conflict = "CONFLICT";
     public const string ProductNameTaken = "PRODUCT_NAME_TAKEN";
+    public const string PossibleDuplicateOrder = "POSSIBLE_DUPLICATE_ORDER";
 
     // 422
     public const string InvalidStatusTransition = "INVALID_STATUS_TRANSITION";

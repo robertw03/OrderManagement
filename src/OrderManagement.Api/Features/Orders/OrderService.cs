@@ -1,12 +1,68 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using OrderManagement.Api.Common.Errors;
 using OrderManagement.Domain;
 using OrderManagement.Infrastructure;
 
 namespace OrderManagement.Api.Features.Orders;
 
-public sealed class OrderService(OrderDbContext db, ICurrentUser currentUser, TimeProvider clock, ILogger<OrderService> logger)
+public sealed class OrderService(
+    OrderDbContext db,
+    ICurrentUser currentUser,
+    TimeProvider clock,
+    IOptions<OrderOptions> options,
+    ILogger<OrderService> logger)
 {
+    /// <summary>
+    /// Second line of defence behind the Idempotency-Key: rejects an order whose content is identical to a
+    /// non-cancelled order of the same customer placed within the duplicate window under a <em>different</em>
+    /// key — e.g. a client that generates a new key per click, or a second click after the first succeeded.
+    /// </summary>
+    private async Task EnsureNotRecentDuplicateAsync(
+        string customerId, string idempotencyKey, string requestHash, DateTimeOffset now, CancellationToken ct)
+    {
+        var window = TimeSpan.FromSeconds(options.Value.DuplicateWindowSeconds);
+        if (window <= TimeSpan.Zero)
+            return;
+
+        // Serialize order creation per customer for the rest of this transaction. Without it, two identical
+        // requests with different keys arriving together would both find "no recent duplicate" and both commit.
+        // The lock is per customer, so different customers never wait on each other.
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT pg_advisory_xact_lock({CustomerLockNamespace}, hashtext({customerId}))", ct);
+
+        var since = now - window;
+        var duplicate = await (
+                from record in db.IdempotencyRecords.AsNoTracking()
+                join order in db.Orders on record.OrderId equals order.Id
+                where record.CustomerId == customerId
+                      && record.RequestHash == requestHash
+                      && record.IdempotencyKey != idempotencyKey
+                      && order.InsertedAt >= since
+                      && order.Status != OrderStatus.Cancelled
+                orderby order.InsertedAt descending
+                select new { order.Id, order.InsertedAt, order.InsertedBy })
+            .FirstOrDefaultAsync(ct);
+
+        if (duplicate is null)
+            return;
+
+        logger.LogWarning("Possible duplicate order for customer {CustomerId}: identical to order {OrderId} placed at {PlacedAt}",
+            customerId, duplicate.Id, duplicate.InsertedAt);
+
+        throw new ConflictException(ErrorCodes.PossibleDuplicateOrder, "Possible duplicate order",
+                $"An identical order ({duplicate.Id}) was placed for customer {customerId} " +
+                $"{(int)(now - duplicate.InsertedAt).TotalSeconds} second(s) ago. " +
+                "Resend with \"confirmDuplicate\": true if this second order is intended.")
+            .With("duplicateOfOrderId", duplicate.Id)
+            .With("duplicateCreatedAt", duplicate.InsertedAt)
+            .With("duplicateCreatedBy", duplicate.InsertedBy)
+            .With("windowSeconds", options.Value.DuplicateWindowSeconds);
+    }
+
+    // Arbitrary constant that keeps these advisory locks apart from any other advisory lock in the database.
+    private const int CustomerLockNamespace = 7_001;
+
     /// <summary>
     /// Creates an order exactly once per (customerId, idempotencyKey).
     /// Everything — claiming the key, deducting stock, inserting the order — happens in one
@@ -58,6 +114,9 @@ public sealed class OrderService(OrderDbContext db, ICurrentUser currentUser, Ti
                     "A request with the same Idempotency-Key is still being processed. Retry shortly.");
             return await ReplayAsync(existing, requestHash, ct);
         }
+
+        if (!request.ConfirmDuplicate)
+            await EnsureNotRecentDuplicateAsync(customerId, idempotencyKey, requestHash, now, ct);
 
         // Check-and-deduct in a single atomic statement per product (Scenario A). The row lock taken by
         // the UPDATE serializes concurrent orders for the same product, and the WHERE clause is

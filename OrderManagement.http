@@ -129,6 +129,37 @@ Idempotency-Key: order-demo-001
   "items": [ { "productId": "{{indomie}}", "quantity": 99 } ]
 }
 
+### Isi sama persis, key BERBEDA, dalam 60 detik -> 409 POSSIBLE_DUPLICATE_ORDER (berisi duplicateOfOrderId)
+POST {{baseUrl}}/api/orders
+Authorization: Bearer {{salesToken}}
+Content-Type: application/json
+Idempotency-Key: order-demo-001-klik-kedua
+
+{
+  "customerId": "CUST-001",
+  "shippingAddress": "Jl. Asia Afrika No. 1, Bandung",
+  "items": [
+    { "productId": "{{indomie}}", "quantity": 2 },
+    { "productId": "{{aqua}}", "quantity": 1 }
+  ]
+}
+
+### Memang sengaja order kedua yang sama -> kirim ulang dengan confirmDuplicate: true -> 201
+POST {{baseUrl}}/api/orders
+Authorization: Bearer {{salesToken}}
+Content-Type: application/json
+Idempotency-Key: order-demo-001-klik-kedua
+
+{
+  "customerId": "CUST-001",
+  "shippingAddress": "Jl. Asia Afrika No. 1, Bandung",
+  "items": [
+    { "productId": "{{indomie}}", "quantity": 2 },
+    { "productId": "{{aqua}}", "quantity": 1 }
+  ],
+  "confirmDuplicate": true
+}
+
 ### Stock tidak cukup -> 409 INSUFFICIENT_STOCK
 POST {{baseUrl}}/api/orders
 Authorization: Bearer {{salesToken}}
