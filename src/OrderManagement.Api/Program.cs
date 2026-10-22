@@ -10,6 +10,7 @@ using OrderManagement.Api.Common.Logging;
 using OrderManagement.Api.Common.Validation;
 using OrderManagement.Api.Features.Auth;
 using OrderManagement.Api.Features.Demo;
+using OrderManagement.Api.Features.Logs;
 using OrderManagement.Api.Features.Orders;
 using OrderManagement.Api.Features.Products;
 using OrderManagement.Domain;
@@ -21,11 +22,18 @@ using Serilog.Context;
 var builder = WebApplication.CreateBuilder(args);
 
 // ---- Logging: Serilog, configured from appsettings ("Serilog" section) ----
-builder.Services.AddSerilog((services, config) => config
-    .ReadFrom.Configuration(builder.Configuration)
-    .ReadFrom.Services(services)
-    .Enrich.FromLogContext()
-    .Enrich.WithProperty("Application", "OrderManagement.Api"));
+// Seq (centralised log server) is optional: set Seq:ServerUrl to ship every event there as well.
+var seqUrl = builder.Configuration["Seq:ServerUrl"];
+builder.Services.AddSerilog((services, config) =>
+{
+    config
+        .ReadFrom.Configuration(builder.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("Application", "OrderManagement.Api");
+    if (!string.IsNullOrWhiteSpace(seqUrl))
+        config.WriteTo.Seq(seqUrl, apiKey: builder.Configuration["Seq:ApiKey"]);
+});
 
 // ---- Persistence (needs ICurrentUser + TimeProvider for the audit columns) ----
 builder.Services.AddHttpContextAccessor();
@@ -40,6 +48,8 @@ builder.Services.AddHealthChecks().AddNpgSql(connectionString);
 builder.Services.Configure<OrderOptions>(builder.Configuration.GetSection(OrderOptions.Section));
 builder.Services.AddScoped<OrderService>();
 builder.Services.AddScoped<ProductService>();
+builder.Services.Configure<LogViewerOptions>(builder.Configuration.GetSection(LogViewerOptions.Section));
+builder.Services.AddSingleton<LogReader>();
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
 // ---- Security: JWT bearer, every endpoint requires login unless marked anonymous ----
@@ -111,6 +121,12 @@ app.UseMiddleware<CorrelationIdMiddleware>();
 app.UseSerilogRequestLogging(options =>
 {
     options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {Elapsed:0.0} ms";
+    // Reading the logs or polling health would otherwise flood the very logs being read.
+    options.GetLevel = (http, _, exception) =>
+        exception is not null || http.Response.StatusCode >= 500 ? Serilog.Events.LogEventLevel.Error
+        : http.Request.Path.StartsWithSegments("/api/logs") || http.Request.Path.StartsWithSegments("/health")
+            ? Serilog.Events.LogEventLevel.Debug
+            : Serilog.Events.LogEventLevel.Information;
     options.EnrichDiagnosticContext = (diagnostics, http) =>
     {
         diagnostics.Set("QueryString", http.Request.QueryString.Value);
@@ -147,6 +163,9 @@ if (app.Environment.IsDevelopment())
 app.MapControllers();
 app.MapHealthChecks("/health").AllowAnonymous();
 
-app.Run();
+await app.RunAsync();
 
-public partial class Program;
+public partial class Program
+{
+    protected Program() { }
+}

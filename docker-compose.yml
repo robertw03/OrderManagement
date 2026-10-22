@@ -1,6 +1,8 @@
 # Alternatif menjalankan tanpa install PostgreSQL / .NET SDK:
 #   docker compose up --build
-# API:  http://localhost:8080/scalar   (dokumentasi interaktif)
+# UI:        http://localhost:8080/          (login: admin / Admin123!)
+# API docs:  http://localhost:8080/scalar
+# Log (Seq): http://localhost:5341/          (cari: CorrelationId = 'K7M2Q')
 services:
   db:
     image: postgres:18
@@ -18,17 +20,33 @@ services:
       timeout: 3s
       retries: 10
 
+  # Centralised log server: every log event of the API is searchable here (production-style).
+  seq:
+    image: datalust/seq:2024.3
+    environment:
+      ACCEPT_EULA: "Y"
+      # Local demo only — production should set SEQ_FIRSTRUN_ADMINPASSWORD instead.
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
+    ports:
+      - "5341:80"
+    volumes:
+      - seqdata:/data
+
   api:
     build: .
     depends_on:
       db:
         condition: service_healthy
+      seq:
+        condition: service_started
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       ConnectionStrings__OrderDb: "Host=db;Port=5432;Database=OrderManagement;Username=postgres;Password=postgres"
       Database__MigrateOnStartup: "true"
+      Seq__ServerUrl: "http://seq"
     ports:
       - "8080:8080"
 
 volumes:
   pgdata:
+  seqdata:

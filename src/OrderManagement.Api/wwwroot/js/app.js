@@ -94,6 +94,10 @@ function reportCodeHtml(code) {
     <button type="button" class="btn btn-sm btn-light py-0 px-2" data-copy="${esc(code)}" title="Salin kode laporan">
       <i class="bi bi-clipboard"></i> Salin</button>
     <span class="opacity-75">· ${time}</span>
+    ${session.user?.role === 'Admin'
+      ? `<button type="button" class="btn btn-sm btn-outline-light py-0 px-2" data-open-log="${esc(code)}" title="Buka log request ini">
+           <i class="bi bi-journal-text"></i> Lihat log</button>`
+      : ''}
   </div>`;
 }
 
@@ -570,9 +574,9 @@ function actionButtons(order, size) {
     }).join(' ');
 }
 
-function renderPager(page, totalPages) {
+function renderPager(page, totalPages, target = '#o-pager') {
   if (totalPages <= 1) {
-    $('#o-pager').innerHTML = '';
+    $(target).innerHTML = '';
     return;
   }
   const start = Math.max(1, Math.min(page - 2, totalPages - 4));
@@ -580,7 +584,7 @@ function renderPager(page, totalPages) {
   const item = (target, label, disabled = false, active = false) =>
     `<li class="page-item ${disabled ? 'disabled' : ''} ${active ? 'active' : ''}">
       <button class="page-link" data-page="${target}" ${disabled ? 'disabled' : ''}>${label}</button></li>`;
-  $('#o-pager').innerHTML = item(page - 1, '&laquo;', page === 1)
+  $(target).innerHTML = item(page - 1, '&laquo;', page === 1)
     + pages.map(p => item(p, p, false, p === page)).join('')
     + item(page + 1, '&raquo;', page === totalPages);
 }
@@ -691,6 +695,145 @@ document.addEventListener('click', event => {
     else if (productButton.dataset.editProduct) openProductModal(product);
     else deleteProduct(product);
   }
+});
+
+// ---------------------------------------------------------------- logs (Admin)
+
+const LEVEL_STYLE = { Verbose: 'light', Debug: 'secondary', Information: 'info', Warning: 'warning', Error: 'danger', Fatal: 'danger' };
+const LEVEL_SHORT = { Verbose: 'VRB', Debug: 'DBG', Information: 'INF', Warning: 'WRN', Error: 'ERR', Fatal: 'FTL' };
+const timeOnly = new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const fullTime = new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'medium' });
+const logState = { page: 1, pageSize: 50, entries: [], datesLoaded: false };
+const logModal = new bootstrap.Modal('#log-modal');
+
+const levelBadge = level =>
+  `<span class="badge text-bg-${LEVEL_STYLE[level] ?? 'secondary'}" title="${esc(level)}">${LEVEL_SHORT[level] ?? esc(level)}</span>`;
+
+// yyyy-MM-dd in the browser's local time zone, matching the server's daily log file on the same machine.
+const localDate = (date = new Date()) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+async function loadLogDates() {
+  const res = await api.logDates();
+  if (!res.ok) return problemToast(res);
+  const today = localDate();
+  const dates = res.data.includes(today) ? res.data : [today, ...res.data];
+  const select = $('#lg-date');
+  const current = select.value || today;
+  select.innerHTML = dates.map(d => `<option value="${d}" ${d === current ? 'selected' : ''}>${d}${d === today ? ' (hari ini)' : ''}</option>`).join('');
+  logState.datesLoaded = true;
+}
+
+async function loadLogs() {
+  if (!logState.datesLoaded) await loadLogDates();
+  const res = await api.logs({
+    date: $('#lg-date').value,
+    code: $('#lg-code').value.trim().toUpperCase(),
+    user: $('#lg-user').value.trim(),
+    level: $('#lg-level').value,
+    q: $('#lg-q').value.trim(),
+    page: logState.page,
+    pageSize: logState.pageSize
+  });
+  if (!res.ok) return problemToast(res);
+
+  const { items, page, pageSize, totalCount, totalPages } = res.data;
+  logState.entries = items;
+  $('#lg-rows').innerHTML = items.length === 0
+    ? '<tr><td colspan="5" class="text-center text-body-secondary py-5"><i class="bi bi-journal-x fs-3 d-block mb-1"></i>Tidak ada log yang cocok dengan filter</td></tr>'
+    : items.map((e, i) => `<tr role="button" data-log-index="${i}">
+        <td class="text-nowrap font-mono">${timeOnly.format(new Date(e.timestamp))}</td>
+        <td>${levelBadge(e.level)}</td>
+        <td>${e.correlationId ? `<a href="#" class="font-mono" data-log-code="${esc(e.correlationId)}">${esc(e.correlationId)}</a>` : '—'}</td>
+        <td>${esc(e.userName ?? '—')}</td>
+        <td class="log-message" title="${esc(e.message)}">${esc(e.message)}${e.exception ? ' <span class="badge text-bg-danger">exception</span>' : ''}</td>
+      </tr>`).join('');
+
+  const first = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const order = $('#lg-code').value.trim() ? 'urut dari awal request' : 'terbaru di atas';
+  $('#lg-summary').textContent = `${first}–${Math.min(page * pageSize, totalCount)} dari ${totalCount} log · ${order}`;
+  renderPager(page, totalPages, '#lg-pager');
+}
+
+/** Opens the Log tab showing everything one request logged — the path IT takes from a user's report code. */
+async function openLogs(code) {
+  bootstrap.Tab.getOrCreateInstance($('[data-bs-target="#tab-logs"]')).show();
+  $('#lg-code').value = code;
+  $('#lg-user').value = '';
+  $('#lg-q').value = '';
+  $('#lg-level').value = '';
+  if (!logState.datesLoaded) await loadLogDates();
+  $('#lg-date').value = localDate();
+  logState.page = 1;
+  await loadLogs();
+}
+
+function showLogDetail(entry) {
+  const field = (label, value) => value == null || value === ''
+    ? ''
+    : `<div class="col-sm-6 col-lg-4"><div class="small text-body-secondary">${label}</div><div class="text-break">${value}</div></div>`;
+
+  $('#log-title').innerHTML = `${levelBadge(entry.level)} <span class="ms-1">Detail Log</span>`;
+  $('#log-body').innerHTML = `
+    <div class="row g-3 mb-3">
+      ${field('Waktu', esc(fullTime.format(new Date(entry.timestamp))))}
+      ${field('Kode laporan', entry.correlationId ? `<span class="font-mono fw-semibold">${esc(entry.correlationId)}</span>` : '')}
+      ${field('User', esc(entry.userName))}
+      ${field('Path', esc(entry.requestPath))}
+      ${field('Status HTTP', entry.statusCode)}
+      ${field('Sumber', `<span class="small font-mono">${esc(entry.sourceContext)}</span>`)}
+      ${field('Trace ID', entry.traceId ? `<span class="small font-mono">${esc(entry.traceId)}</span>` : '')}
+    </div>
+    <div class="small text-body-secondary">Pesan</div>
+    <p class="fw-medium">${esc(entry.message)}</p>
+    ${entry.exception ? `<div class="small text-body-secondary">Exception</div><pre class="log-json text-danger">${esc(entry.exception)}</pre>` : ''}
+    <div class="small text-body-secondary">Semua properti</div>
+    <pre class="log-json mb-0">${esc(JSON.stringify(entry.properties, null, 2))}</pre>`;
+
+  const trace = $('#log-trace');
+  trace.dataset.code = entry.correlationId ?? '';
+  trace.disabled = !entry.correlationId;
+  logModal.show();
+}
+
+$('#log-trace').addEventListener('click', () => {
+  const code = $('#log-trace').dataset.code;
+  $('#log-modal').addEventListener('hidden.bs.modal', () => openLogs(code), { once: true });
+  logModal.hide();
+});
+
+$('#lg-rows').addEventListener('click', event => {
+  const codeLink = event.target.closest('[data-log-code]');
+  if (codeLink) {
+    event.preventDefault();
+    openLogs(codeLink.dataset.logCode);
+    return;
+  }
+  const row = event.target.closest('[data-log-index]');
+  if (row) showLogDetail(logState.entries[Number(row.dataset.logIndex)]);
+});
+
+$('#log-filter').addEventListener('submit', event => {
+  event.preventDefault();
+  logState.page = 1;
+  loadLogs();
+});
+$('#log-filter').addEventListener('reset', () => setTimeout(() => { logState.page = 1; loadLogs(); }));
+$('#lg-pager').addEventListener('click', event => {
+  const button = event.target.closest('[data-page]');
+  if (!button) return;
+  logState.page = Number(button.dataset.page);
+  loadLogs();
+});
+$('#l-refresh').addEventListener('click', async () => {
+  logState.datesLoaded = false;
+  await loadLogs();
+});
+$('[data-bs-target="#tab-logs"]').addEventListener('shown.bs.tab', () => loadLogs());
+
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-open-log]');
+  if (button) openLogs(button.dataset.openLog);
 });
 
 // ---------------------------------------------------------------- concurrency simulation
@@ -895,6 +1038,7 @@ if (session.token) {
 } else {
   showLogin();
 }
+
 
 
 

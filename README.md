@@ -53,7 +53,8 @@ dotnet run --project src/OrderManagement.Api
 docker compose up --build
 ```
 
-UI di <http://localhost:8080/>, dokumentasi API di <http://localhost:8080/scalar>, PostgreSQL di `localhost:5433`.
+UI di <http://localhost:8080/>, dokumentasi API di <http://localhost:8080/scalar>, PostgreSQL di `localhost:5433`,
+Seq (pencarian log) di <http://localhost:5341/>.
 
 ### Menjalankan Test
 
@@ -76,6 +77,7 @@ oleh API yang sama dan **hanya memanggil REST API publik** — tidak ada logic b
 | **Orders** | Cari order berdasarkan ID (Get Order), form buat order (multi item, estimasi total, Idempotency-Key otomatis), daftar order dengan filter status/customer/tanggal + pagination, detail order, tombol transisi status sesuai `allowedNextStatuses` dari API **dan** role user |
 | **Produk** | Stock per produk (auto refresh). Admin: tambah produk, edit nama/harga/status aktif, atur stock (masuk/keluar), hapus (soft delete) |
 | **Simulasi Concurrency** *(Admin)* | Satu klik menjalankan Skenario A, B, C, dan D (klik ganda dengan key berbeda) memakai **token user yang sedang login**: request dikirim **bersamaan** dari browser, lalu hasilnya diverifikasi dan ditampilkan (status HTTP, error code, waktu, correlation ID tiap request) |
+| **Log** *(Admin)* | Cari log berdasarkan kode laporan / user / level / kata kunci, detail per baris (stack trace, properti), dibuka langsung dari tombol "Lihat log" di toast error — lihat [§9.1](#91-panduan-it-ops-melacak-issue-yang-dilaporkan-user) |
 
 Detail yang bisa didemokan:
 - Proteksi double order berlapis (lihat [§5](#5-idempotency)): tombol *Submit* terkunci selama request berjalan dan
@@ -109,7 +111,7 @@ Akun demo (dibuat otomatis bila tabel user kosong, hanya saat `Database:SeedDemo
 | Cancel order | ✓ | ✓ |
 | Confirm / Ship / Deliver (`PATCH /status`) | ✓ | — (403) |
 | Tambah / edit / atur stock / hapus produk | ✓ | — (403) |
-| Endpoint demo & tab Simulasi | ✓ | — |
+| Endpoint demo, tab Simulasi, tab Log (`/api/logs`) | ✓ | — (403) |
 
 `Jwt:SigningKey` untuk Development ada di `appsettings.Development.json`; di environment lain wajib diisi lewat
 environment variable `Jwt__SigningKey` (minimal 32 byte) — aplikasi menolak start bila kosong.
@@ -159,6 +161,7 @@ src/
     Features/Auth/                 Login, JWT, role, seed akun demo
     Features/Orders/               Controller, service, DTO, validator  (vertical slice per fitur)
     Features/Products/             Master produk: CRUD, atur stock atomic, soft delete
+    Features/Logs/                 Log viewer: baca file log JSON, cari per kode laporan (Admin)
     Features/Demo/                 Endpoint reset data demo (Development only)
     wwwroot/                       UI demo (Bootstrap 5 + JS)
 tests/
@@ -542,11 +545,16 @@ Contoh tracing satu request yang gagal:
    | Production (rekomendasi) | Dikirim ke Seq / ELK / Loki; file lokal hanya cadangan |
 
    Retensi file: 14 hari (`Serilog:WriteTo:File:Args:retainedFileCountLimit` di `appsettings.json`).
-3. **Cari berdasarkan kode laporan** — hasilnya seluruh rangkaian log satu request itu (masuk → log bisnis → error → respons):
+3. **Lewat web — tab Log** (role Admin): masukkan kode laporan → tampil seluruh rangkaian log satu request itu
+   (masuk → log bisnis → error → respons), urut dari awal. Filter lain: tanggal, user, level minimal, kata kunci.
+   Klik baris untuk detail (pesan lengkap, stack trace, semua properti, trace id). Admin juga bisa menekan
+   **"Lihat log"** langsung dari toast error. Di belakangnya: `GET /api/logs?code=K7M2Q` (Admin) yang membaca file
+   JSON di atas — cocok untuk satu server; untuk banyak server/volume besar gunakan Seq (langkah 7).
+4. **Lewat file (tanpa UI)** — cari berdasarkan kode laporan:
    ```powershell
    Select-String -Path src\OrderManagement.Api\logs\order-management-*.json -Pattern '"CorrelationId":"K7M2Q"'
    ```
-4. **Tanpa kode** — cari berdasarkan user dan level di hari kejadian:
+   atau, tanpa kode, berdasarkan user dan level di hari kejadian:
    ```powershell
    Select-String -Path src\OrderManagement.Api\logs\order-management-20261022.json -Pattern '"UserName":"sales"' |
      Select-String -Pattern '"@l":"(Warning|Error)"'
@@ -555,12 +563,18 @@ Contoh tracing satu request yang gagal:
    (mis. `ProductId`, `Requested`, `Available`), `@x` stack trace (khusus error), `CorrelationId`, `UserName`,
    `RequestPath`, `@tr` trace id unik. Arti `errorCode` ada di tabel [§8](#8-validasi--error-handling).
 6. **Bila dua request kebetulan punya kode sama**, bedakan dari jam (`@t`), `UserName`, atau `@tr`.
+7. **Seq (rekomendasi production)** — server log terpusat dengan UI pencarian, dashboard, dan alert. Aktif bila
+   `Seq:ServerUrl` diisi (kosong = nonaktif, tidak ada yang berubah):
+   - **Docker Compose**: sudah termasuk service `seq` → buka <http://localhost:5341>, cari `CorrelationId = 'K7M2Q'`.
+   - **Tanpa Docker**: pasang [Seq untuk Windows](https://datalust.co/download), lalu isi
+     `"Seq": { "ServerUrl": "http://localhost:5341" }` di `appsettings.Development.json`.
+   - Production: isi `Seq__ServerUrl` dan `Seq__ApiKey` lewat environment variable.
 
 ---
 
 ## 10. Testing
 
-**100 test** (46 unit + 54 integrasi). Integration test menjalankan API sungguhan (`WebApplicationFactory`) terhadap
+**111 test** (52 unit + 59 integrasi). Integration test menjalankan API sungguhan (`WebApplicationFactory`) terhadap
 **PostgreSQL sungguhan** — concurrency bergantung pada locking database, sehingga provider in-memory/SQLite tidak
 akan membuktikan apa pun. Request concurrent dilepas bersamaan dengan *start gate* (`TaskCompletionSource`) agar
 benar-benar tumpang tindih di database.
@@ -628,6 +642,8 @@ Semua endpoint `/api/*` kecuali login butuh `Authorization: Bearer <token>`. Hea
 | `GET` | `/health` | — | Health check (termasuk koneksi database) |
 | `POST` | `/api/demo/reset` | Admin | *Development only* — hapus semua order, kembalikan stock produk seed |
 | `PUT` | `/api/demo/products/{id}/stock` | Admin | *Development only* — set stock produk (body `{ "stockQuantity": 15 }`) |
+| `GET` | `/api/logs?date=&code=&user=&level=&q=&page=&pageSize=` | Admin | Cari log aplikasi (file JSON harian); `code` = kode laporan |
+| `GET` | `/api/logs/dates` | Admin | Tanggal yang punya file log |
 
 Respons order menyertakan `allowedNextStatuses` (transisi yang sah dari status saat ini) sehingga client tidak perlu
 menduplikasi state machine.

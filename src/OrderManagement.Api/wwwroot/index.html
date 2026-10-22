@@ -61,6 +61,7 @@
           <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#tab-orders" type="button" role="tab"><i class="bi bi-receipt me-1"></i>Orders</button></li>
           <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-products" type="button" role="tab"><i class="bi bi-boxes me-1"></i>Produk</button></li>
           <li class="nav-item admin-only"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-sim" type="button" role="tab"><i class="bi bi-lightning-charge me-1"></i>Simulasi Concurrency</button></li>
+          <li class="nav-item admin-only"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tab-logs" type="button" role="tab"><i class="bi bi-journal-text me-1"></i>Log</button></li>
         </ul>
         <div class="d-flex align-items-center gap-2">
           <a class="btn btn-sm btn-outline-secondary text-nowrap" href="/scalar" target="_blank" rel="noopener"><i class="bi bi-book me-1"></i>API Docs</a>
@@ -280,8 +281,79 @@
           </div>
         </div>
       </section>
+
+      <!-- ====================== LOGS ====================== -->
+      <section class="tab-pane fade" id="tab-logs" role="tabpanel">
+        <div class="card shadow-sm">
+          <div class="card-header d-flex flex-wrap align-items-center gap-2">
+            <span class="fw-semibold me-auto"><i class="bi bi-journal-text me-1"></i>Log Aplikasi</span>
+            <span class="small text-body-secondary">Sumber: file JSON harian di folder <code>logs</code></span>
+            <button id="l-refresh" class="btn btn-sm btn-outline-secondary" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+          <div class="card-body pb-0">
+            <form id="log-filter" class="row g-2 align-items-end" novalidate>
+              <div class="col-6 col-md-2">
+                <label class="form-label small mb-1" for="lg-date">Tanggal</label>
+                <select id="lg-date" class="form-select form-select-sm"></select>
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small mb-1" for="lg-code">Kode laporan</label>
+                <input id="lg-code" class="form-control form-control-sm font-mono text-uppercase" placeholder="K7M2Q" maxlength="64" autocomplete="off">
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small mb-1" for="lg-user">User</label>
+                <input id="lg-user" class="form-control form-control-sm" placeholder="sales" maxlength="100">
+              </div>
+              <div class="col-6 col-md-2">
+                <label class="form-label small mb-1" for="lg-level">Level minimal</label>
+                <select id="lg-level" class="form-select form-select-sm">
+                  <option value="">Semua</option>
+                  <option>Information</option>
+                  <option selected>Warning</option>
+                  <option>Error</option>
+                </select>
+              </div>
+              <div class="col-8 col-md-2">
+                <label class="form-label small mb-1" for="lg-q">Kata kunci</label>
+                <input id="lg-q" class="form-control form-control-sm" placeholder="stock, 409, …" maxlength="200">
+              </div>
+              <div class="col-4 col-md-2 d-flex gap-1">
+                <button class="btn btn-sm btn-primary flex-fill" type="submit"><i class="bi bi-search"></i> Cari</button>
+                <button class="btn btn-sm btn-outline-secondary" type="reset" title="Reset filter"><i class="bi bi-x-lg"></i></button>
+              </div>
+            </form>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover table-sm align-middle mb-0 mt-3 log-table">
+              <thead><tr><th>Waktu</th><th>Level</th><th>Kode</th><th>User</th><th>Pesan</th></tr></thead>
+              <tbody id="lg-rows"></tbody>
+            </table>
+          </div>
+          <div class="card-footer d-flex flex-wrap gap-2 align-items-center">
+            <span id="lg-summary" class="small text-body-secondary me-auto"></span>
+            <nav><ul id="lg-pager" class="pagination pagination-sm mb-0"></ul></nav>
+          </div>
+        </div>
+      </section>
     </div>
   </main>
+
+  <!-- Log entry detail -->
+  <div class="modal fade" id="log-modal" tabindex="-1" aria-labelledby="log-title" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title h5" id="log-title">Detail Log</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Tutup"></button>
+        </div>
+        <div class="modal-body" id="log-body"></div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-primary me-auto" id="log-trace"><i class="bi bi-diagram-3 me-1"></i>Semua log dengan kode ini</button>
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- Order detail -->
   <div class="modal fade" id="detail-modal" tabindex="-1" aria-labelledby="detail-title" aria-hidden="true">

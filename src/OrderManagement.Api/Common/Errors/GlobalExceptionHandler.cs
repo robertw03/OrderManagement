@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using Serilog.Context;
 
 namespace OrderManagement.Api.Common.Errors;
 
@@ -15,7 +16,13 @@ public sealed class GlobalExceptionHandler(
 {
     public async ValueTask<bool> TryHandleAsync(HttpContext httpContext, Exception exception, CancellationToken cancellationToken)
     {
-        var problem = Map(httpContext, exception);
+        // The exception handler runs outside the middleware that adds the user to the log context,
+        // so add it here — otherwise the most important line of a failed request has no user.
+        ProblemDetails problem;
+        using (LogContext.PushProperty("UserName", httpContext.User.Identity?.Name ?? "anonymous"))
+        {
+            problem = Map(httpContext, exception);
+        }
         httpContext.Response.StatusCode = problem.Status ?? StatusCodes.Status500InternalServerError;
 
         return await problemDetailsService.TryWriteAsync(new ProblemDetailsContext

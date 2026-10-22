@@ -486,3 +486,5 @@ logs/
 
 # Claude Code local context (not part of the submission)
 .claude/
+# ...but not the source folder of the log viewer feature
+!src/OrderManagement.Api/Features/Logs/

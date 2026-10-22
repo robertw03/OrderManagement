@@ -64,3 +64,23 @@ body:not(.role-admin) .admin-only {
     width: 100%;
   }
 }
+
+.log-table td {
+  font-size: .85rem;
+}
+
+.log-table .log-message {
+  max-width: 48rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-json {
+  max-height: 24rem;
+  overflow: auto;
+  font-size: .8rem;
+  background-color: var(--bs-tertiary-bg);
+  border-radius: var(--bs-border-radius);
+  padding: .75rem;
+}

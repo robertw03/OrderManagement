@@ -127,5 +127,8 @@ export const api = {
     request('POST', `/api/orders/${id}/cancel`, { body: { expectedVersion } }),
 
   resetDemo: () => request('POST', '/api/demo/reset'),
-  setStock: (id, stockQuantity) => request('PUT', `/api/demo/products/${id}/stock`, { body: { stockQuantity } })
+  setStock: (id, stockQuantity) => request('PUT', `/api/demo/products/${id}/stock`, { body: { stockQuantity } }),
+
+  logs: params => request('GET', `/api/logs?${query(params)}`),
+  logDates: () => request('GET', '/api/logs/dates')
 };
