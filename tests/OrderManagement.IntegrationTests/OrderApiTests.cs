@@ -365,6 +365,16 @@ public sealed class OrderApiTests(ApiFixture fixture) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Without_a_correlation_header_the_server_issues_a_5_character_report_code()
+    {
+        var response = await _client.GetAsync($"/api/orders/{Guid.NewGuid()}");
+
+        var code = response.Headers.GetValues("X-Correlation-ID").Single();
+        code.Should().MatchRegex("^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{5}$", "no look-alike characters such as 0/O or 1/I/L");
+        (await response.ReadProblemAsync()).GetProperty("correlationId").GetString().Should().Be(code);
+    }
+
+    [Fact]
     public async Task Every_error_carries_the_request_correlation_id()
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"/api/orders/{Guid.NewGuid()}");

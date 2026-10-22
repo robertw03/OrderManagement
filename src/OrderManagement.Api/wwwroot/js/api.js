@@ -1,5 +1,5 @@
-// Thin client for the Order Management REST API. Every call sends the session's bearer token and a
-// fresh X-Correlation-ID, so a request seen in the UI can be found in the server logs.
+// Thin client for the Order Management REST API. Every call sends the session's bearer token; the server answers
+// with a short report code (X-Correlation-ID) that appears in every log line of that request.
 
 const SESSION_KEY = 'orderManagement.session';
 let onUnauthorized = () => {};
@@ -57,10 +57,9 @@ export function newId() {
  * { ok, status, data, headers, correlationId, ms } so callers can inspect failures too.
  */
 export async function request(method, path, { body, headers = {}, anonymous = false } = {}) {
-  const correlationId = `ui-${newId().replaceAll('-', '').slice(0, 12)}`;
   const init = {
     method,
-    headers: { Accept: 'application/json', 'X-Correlation-ID': correlationId, ...headers }
+    headers: { Accept: 'application/json', ...headers }
   };
   if (!anonymous && session.token) init.headers.Authorization = `Bearer ${session.token}`;
   if (body !== undefined) {
@@ -74,7 +73,7 @@ export async function request(method, path, { body, headers = {}, anonymous = fa
     response = await fetch(path, init);
   } catch (error) {
     return {
-      ok: false, status: 0, headers: new Headers(), correlationId,
+      ok: false, status: 0, headers: new Headers(), correlationId: null,
       data: { title: 'Network error', detail: error.message },
       ms: Math.round(performance.now() - started)
     };
@@ -97,7 +96,7 @@ export async function request(method, path, { body, headers = {}, anonymous = fa
     status: response.status,
     data,
     headers: response.headers,
-    correlationId: response.headers.get('X-Correlation-ID') || correlationId,
+    correlationId: response.headers.get('X-Correlation-ID'),
     ms: Math.round(performance.now() - started)
   };
 }

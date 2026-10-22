@@ -40,10 +40,10 @@ const httpBadge = status => {
 // The same message within a few seconds is shown once — e.g. auto refresh failing while the server is down.
 const recentToasts = new Map();
 
-function toast(html, variant = 'success') {
+function toast(html, variant = 'success', dedupeKey = html) {
   const now = Date.now();
-  if (now - (recentToasts.get(html) ?? 0) < 4000) return;
-  recentToasts.set(html, now);
+  if (now - (recentToasts.get(dedupeKey) ?? 0) < 4000) return;
+  recentToasts.set(dedupeKey, now);
 
   const el = document.createElement('div');
   el.className = `toast align-items-center text-bg-${variant} border-0`;
@@ -70,13 +70,52 @@ function problemToast(res) {
     .slice(0, 6)
     .join('');
 
+  // A server failure says nothing useful to the user; tell them what to do instead.
+  const detail = res.status >= 500
+    ? 'Terjadi kesalahan sistem. Laporkan kode di bawah ini ke tim IT.'
+    : p.detail;
+
   toast(`<strong><i class="bi bi-exclamation-triangle me-1"></i>${esc(p.title ?? 'Error')}</strong>
     <span class="opacity-75">(${res.status || 'network'}${p.errorCode ? ` · ${esc(p.errorCode)}` : ''})</span>
-    ${p.detail ? `<div>${esc(p.detail)}</div>` : ''}
+    ${detail ? `<div>${esc(detail)}</div>` : ''}
     ${fieldErrors ? `<ul class="mb-1 ps-3 small">${fieldErrors}</ul>` : ''}
-    <div class="small opacity-75 font-mono">correlationId: ${esc(res.correlationId)}</div>`,
-    res.status === 409 ? 'warning' : 'danger');
+    ${reportCodeHtml(res.correlationId)}`,
+    res.status === 409 ? 'warning' : 'danger',
+    `${res.status}|${p.errorCode}|${p.detail}`);
 }
+
+/** "Kode laporan: K7M2Q [Salin] · 14:05:31" — what the user sends to IT, who searches the logs for it. */
+function reportCodeHtml(code) {
+  if (!code) return '';
+  const time = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return `<div class="small mt-1 d-flex align-items-center gap-1 flex-wrap">
+    <span class="opacity-75">Kode laporan:</span>
+    <strong class="font-mono fs-6 report-code">${esc(code)}</strong>
+    <button type="button" class="btn btn-sm btn-light py-0 px-2" data-copy="${esc(code)}" title="Salin kode laporan">
+      <i class="bi bi-clipboard"></i> Salin</button>
+    <span class="opacity-75">· ${time}</span>
+  </div>`;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Clipboard API needs a secure context; fall back to a temporary textarea.
+    const area = Object.assign(document.createElement('textarea'), { value: text });
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+}
+
+document.addEventListener('click', async event => {
+  const button = event.target.closest('[data-copy]');
+  if (!button) return;
+  await copyText(button.dataset.copy);
+  button.innerHTML = '<i class="bi bi-check2"></i> Tersalin';
+});
 
 // Anything that slips through (a bug, a failed script) still reaches the user instead of failing silently.
 window.addEventListener('error', event => errorToast('Terjadi kesalahan di aplikasi', event.message));

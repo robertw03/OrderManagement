@@ -508,9 +508,11 @@ try/catch. Pelanggaran constraint database (unique/check) dan deadlock juga dipe
 ## 9. Logging & Tracing
 
 - **Serilog**, *structured* (properti bisa di-query, bukan string). Bukan `Console.WriteLine`.
-- **Correlation ID**: middleware membaca header `X-Correlation-ID` (atau membuat baru), mengembalikannya di response
-  header, memasukkannya ke `ProblemDetails.correlationId`, dan mendorongnya ke `LogContext` sehingga **setiap baris
-  log** dalam request tersebut membawa `CorrelationId`. Client / API gateway dapat meneruskan ID yang sama antar service.
+- **Correlation ID / kode laporan**: middleware membaca header `X-Correlation-ID` dari gateway/service lain, atau bila
+  tidak ada membuat **kode laporan 5 karakter** (mis. `K7M2Q`; huruf besar & angka tanpa karakter mirip 0/O, 1/I/L).
+  Kode dikembalikan di response header, di `ProblemDetails.correlationId`, dan didorong ke `LogContext` sehingga
+  **setiap baris log** request tersebut membawa `CorrelationId`. Kode pendek dipilih agar mudah dibacakan user ke IT;
+  karena bukan kunci unik (~28,6 juta kombinasi), setiap baris log juga menyimpan **trace id W3C** (`@tr`) yang unik.
 - **User**: username dari token juga didorong ke `LogContext` (`UserName`), jadi setiap log menunjukkan siapa pelakunya.
 - **Request log** satu baris per request: method, path, status, durasi, user, client IP, user agent, idempotency key.
 - **Log bisnis** di titik penting: order dibuat (by user), replay idempotency, stock tidak cukup (Warning),
@@ -521,10 +523,38 @@ try/catch. Pelanggaran constraint database (unique/check) dan deadlock juga dipe
 Contoh tracing satu request yang gagal:
 
 ```
-[10:31:55.426 WRN] [c0a8017f9b2e4c1d] [sales] OrderManagement.Api.Features.Orders.OrderService: Insufficient stock for product a1000000-… requested 10, available 5
-[10:31:55.430 WRN] [c0a8017f9b2e4c1d] [sales] OrderManagement.Api.Common.Errors.GlobalExceptionHandler: Request rejected with 409 INSUFFICIENT_STOCK: …
-[10:31:55.431 INF] [c0a8017f9b2e4c1d] [sales] Serilog.AspNetCore.RequestLoggingMiddleware: HTTP POST /api/orders responded 409 in 12.3 ms
+[10:31:55.426 WRN] [K7M2Q] [sales] OrderManagement.Api.Features.Orders.OrderService: Insufficient stock for product a1000000-… requested 10, available 5
+[10:31:55.430 WRN] [K7M2Q] [sales] OrderManagement.Api.Common.Errors.GlobalExceptionHandler: Request rejected with 409 INSUFFICIENT_STOCK: …
+[10:31:55.431 INF] [K7M2Q] [sales] Serilog.AspNetCore.RequestLoggingMiddleware: HTTP POST /api/orders responded 409 in 12.3 ms
 ```
+
+### 9.1 Panduan IT Ops: melacak issue yang dilaporkan user
+
+1. **User** — setiap error di UI tampil sebagai toast berisi **"Kode laporan: K7M2Q [Salin] · 14:05:31"**. User cukup
+   mengirim kode tersebut (atau screenshot toast) ke IT. Error 500 menampilkan pesan *"Terjadi kesalahan sistem.
+   Laporkan kode di bawah ini ke tim IT."* tanpa detail teknis.
+2. **Lokasi log** — file JSON harian `order-management-YYYYMMDD.json` di folder `logs` pada *working directory* aplikasi:
+
+   | Cara menjalankan | Lokasi |
+   |---|---|
+   | `dotnet run --project src/OrderManagement.Api` / F5 di VS Code | `src/OrderManagement.Api/logs/` |
+   | Docker Compose | `/app/logs/` di container `api` (`docker compose exec api ls /app/logs`, atau `docker compose cp api:/app/logs ./logs`) |
+   | Production (rekomendasi) | Dikirim ke Seq / ELK / Loki; file lokal hanya cadangan |
+
+   Retensi file: 14 hari (`Serilog:WriteTo:File:Args:retainedFileCountLimit` di `appsettings.json`).
+3. **Cari berdasarkan kode laporan** — hasilnya seluruh rangkaian log satu request itu (masuk → log bisnis → error → respons):
+   ```powershell
+   Select-String -Path src\OrderManagement.Api\logs\order-management-*.json -Pattern '"CorrelationId":"K7M2Q"'
+   ```
+4. **Tanpa kode** — cari berdasarkan user dan level di hari kejadian:
+   ```powershell
+   Select-String -Path src\OrderManagement.Api\logs\order-management-20261022.json -Pattern '"UserName":"sales"' |
+     Select-String -Pattern '"@l":"(Warning|Error)"'
+   ```
+5. **Membaca satu baris log** — field penting: `@t` waktu (UTC), `@l` level, `@mt` template pesan beserta nilainya
+   (mis. `ProductId`, `Requested`, `Available`), `@x` stack trace (khusus error), `CorrelationId`, `UserName`,
+   `RequestPath`, `@tr` trace id unik. Arti `errorCode` ada di tabel [§8](#8-validasi--error-handling).
+6. **Bila dua request kebetulan punya kode sama**, bedakan dari jam (`@t`), `UserName`, atau `@tr`.
 
 ---
 
