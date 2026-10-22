@@ -36,7 +36,14 @@ const httpBadge = status => {
   return `<span class="badge text-bg-${tone}">${status || 'ERR'}</span>`;
 };
 
+// The same message within a few seconds is shown once — e.g. auto refresh failing while the server is down.
+const recentToasts = new Map();
+
 function toast(html, variant = 'success') {
+  const now = Date.now();
+  if (now - (recentToasts.get(html) ?? 0) < 4000) return;
+  recentToasts.set(html, now);
+
   const el = document.createElement('div');
   el.className = `toast align-items-center text-bg-${variant} border-0`;
   el.role = 'status';
@@ -44,18 +51,36 @@ function toast(html, variant = 'success') {
     <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Tutup"></button></div>`;
   $('#toasts').append(el);
   el.addEventListener('hidden.bs.toast', () => el.remove());
-  new bootstrap.Toast(el, { delay: 6000 }).show();
+  new bootstrap.Toast(el, { delay: variant === 'danger' || variant === 'warning' ? 8000 : 5000 }).show();
 }
 
+function errorToast(title, detail) {
+  toast(`<strong><i class="bi bi-exclamation-triangle me-1"></i>${esc(title)}</strong>${detail ? `<div>${esc(detail)}</div>` : ''}`, 'danger');
+}
+
+/** Shows any failed API response (ProblemDetails) as a toast, including field-level validation errors. */
 function problemToast(res) {
-  if (res.status === 401) return; // handled by the session-expired flow
+  // An expired session is reported once by the unauthorized handler; wrong credentials are shown here.
+  if (res.status === 401 && res.data?.errorCode !== 'INVALID_CREDENTIALS') return;
+
   const p = res.data ?? {};
-  toast(`<strong>${esc(p.title ?? 'Error')}</strong>
+  const fieldErrors = Object.entries(p.errors ?? {})
+    .flatMap(([field, messages]) => messages.map(m => `<li><code class="text-reset">${esc(field)}</code>: ${esc(m)}</li>`))
+    .slice(0, 6)
+    .join('');
+
+  toast(`<strong><i class="bi bi-exclamation-triangle me-1"></i>${esc(p.title ?? 'Error')}</strong>
     <span class="opacity-75">(${res.status || 'network'}${p.errorCode ? ` · ${esc(p.errorCode)}` : ''})</span>
-    <div>${esc(p.detail ?? '')}</div>
+    ${p.detail ? `<div>${esc(p.detail)}</div>` : ''}
+    ${fieldErrors ? `<ul class="mb-1 ps-3 small">${fieldErrors}</ul>` : ''}
     <div class="small opacity-75 font-mono">correlationId: ${esc(res.correlationId)}</div>`,
     res.status === 409 ? 'warning' : 'danger');
 }
+
+// Anything that slips through (a bug, a failed script) still reaches the user instead of failing silently.
+window.addEventListener('error', event => errorToast('Terjadi kesalahan di aplikasi', event.message));
+window.addEventListener('unhandledrejection', event =>
+  errorToast('Terjadi kesalahan di aplikasi', event.reason?.message ?? String(event.reason)));
 
 function setBusy(button, busy) {
   if (busy) {
@@ -95,12 +120,9 @@ const state = {
 
 // ---------------------------------------------------------------- login / session
 
-function showLogin(message) {
+function showLogin() {
   $('#app-view').classList.add('d-none');
   $('#login-view').classList.remove('d-none');
-  const alert = $('#login-alert');
-  alert.textContent = message ?? '';
-  alert.classList.toggle('d-none', !message);
   $('#l-password').value = '';
   $('#l-username').focus();
 }
@@ -137,7 +159,8 @@ async function enterApp(user) {
 setUnauthorizedHandler(() => {
   if (!session.token) return;
   session.clear();
-  showLogin('Sesi berakhir, silakan masuk kembali.');
+  toast('<strong><i class="bi bi-clock-history me-1"></i>Sesi berakhir</strong><div>Silakan masuk kembali.</div>', 'warning');
+  showLogin();
 });
 
 $('#login-form').addEventListener('submit', async event => {
@@ -148,9 +171,8 @@ $('#login-form').addEventListener('submit', async event => {
   setBusy(button, false);
 
   if (!res.ok) {
-    const alert = $('#login-alert');
-    alert.textContent = res.data?.detail ?? res.data?.title ?? 'Login gagal';
-    alert.classList.remove('d-none');
+    problemToast(res);
+    $('#l-password').select();
     return;
   }
   session.set(res.data);
@@ -494,6 +516,17 @@ $('#o-filter').addEventListener('submit', event => {
 $('#o-filter').addEventListener('reset', () => setTimeout(() => { state.query.page = 1; loadOrders(); }));
 $('#o-refresh').addEventListener('click', loadOrders);
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+$('#o-find').addEventListener('submit', event => {
+  event.preventDefault();
+  const id = $('#o-find-id').value.trim();
+  if (!GUID.test(id)) {
+    errorToast('Order ID tidak valid', 'Masukkan ID lengkap, mis. 01a161aa-b94e-7d31-a632-e425ab6bf899.');
+    return;
+  }
+  showDetail(id);
+});
+
 // ---------------------------------------------------------------- status changes & detail
 
 async function changeStatus(button) {
@@ -606,7 +639,11 @@ const sim = {
 
 async function stockOf(productId) {
   const res = await api.product(productId);
-  return res.ok ? res.data.stockQuantity : Number.NaN;
+  if (!res.ok) {
+    problemToast(res);
+    throw new Error(`Gagal membaca stock produk (${res.status})`);
+  }
+  return res.data.stockQuantity;
 }
 
 // Releases all requests in the same tick so they overlap on the server.
@@ -622,7 +659,8 @@ async function scenarioA() {
   const setup = await api.setStock(PRODUCT_X, initialStock);
   if (!setup.ok) {
     sim.row('setup: set stock Product X', setup);
-    return sim.verdict(false, 'Endpoint demo hanya tersedia di environment Development');
+    problemToast(setup);
+    return sim.verdict(false, setup.status === 404 ? 'Endpoint demo hanya tersedia di environment Development' : 'Setup gagal');
   }
 
   const results = await concurrently(buyers, i => api.createOrder({
@@ -651,10 +689,17 @@ async function scenarioB() {
     customerId: 'SIM-B', shippingAddress: 'Simulasi Skenario B', items: [{ productId: INDOMIE, quantity: 1 }]
   }, newId());
   sim.row('<span class="text-body-secondary">setup:</span> POST /orders', created, created.ok ? `v${created.data.version} Pending` : undefined);
-  if (!created.ok) return sim.verdict(false, 'Setup gagal — coba Reset data demo');
+  if (!created.ok) {
+    problemToast(created);
+    return sim.verdict(false, 'Setup gagal — coba Reset data demo');
+  }
 
   const confirmed = await api.updateStatus(created.data.id, 'Confirmed', 1);
   sim.row('<span class="text-body-secondary">setup:</span> PATCH → Confirmed (v1)', confirmed, confirmed.ok ? 'v2 Confirmed' : undefined);
+  if (!confirmed.ok) {
+    problemToast(confirmed);
+    return sim.verdict(false, 'Setup gagal — order tidak bisa di-Confirm');
+  }
   const stockBefore = await stockOf(INDOMIE);
 
   const [ship, cancel] = await concurrently(2, i => i === 0
@@ -707,6 +752,7 @@ $$('[data-sim]').forEach(button => button.addEventListener('click', async () => 
     await scenarios[button.dataset.sim]();
   } catch (error) {
     sim.verdict(false, error.message);
+    errorToast('Simulasi gagal', error.message);
   } finally {
     $$('[data-sim]').forEach(b => { b.disabled = false; });
     await Promise.all([loadOrders(), loadProducts()]);
@@ -737,4 +783,5 @@ if (session.token) {
 } else {
   showLogin();
 }
+
 

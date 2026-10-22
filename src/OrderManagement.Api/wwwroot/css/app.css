@@ -54,3 +54,13 @@ body:not(.role-admin) .admin-only {
   width: 100%;
   max-width: 24rem;
 }
+
+.find-box {
+  width: 16rem;
+}
+
+@media (max-width: 575.98px) {
+  .find-box {
+    width: 100%;
+  }
+}

@@ -73,7 +73,7 @@ oleh API yang sama dan **hanya memanggil REST API publik** — tidak ada logic b
 | Halaman | Isi |
 |---|---|
 | **Login** | Username/password → token JWT disimpan di `sessionStorage`; daftar akun demo bisa diklik untuk mengisi form |
-| **Orders** | Form buat order (multi item, estimasi total, Idempotency-Key otomatis), daftar order dengan filter status/customer/tanggal + pagination, detail order, tombol transisi status sesuai `allowedNextStatuses` dari API **dan** role user |
+| **Orders** | Cari order berdasarkan ID (Get Order), form buat order (multi item, estimasi total, Idempotency-Key otomatis), daftar order dengan filter status/customer/tanggal + pagination, detail order, tombol transisi status sesuai `allowedNextStatuses` dari API **dan** role user |
 | **Produk** | Stock per produk (auto refresh). Admin: tambah produk, edit nama/harga/status aktif, atur stock (masuk/keluar), hapus (soft delete) |
 | **Simulasi Concurrency** *(Admin)* | Satu klik menjalankan Skenario A, B, dan C memakai **token user yang sedang login**: request dikirim **bersamaan** dari browser, lalu hasilnya diverifikasi dan ditampilkan (status HTTP, error code, waktu, correlation ID tiap request) |
 
@@ -83,7 +83,8 @@ Detail yang bisa didemokan:
 - User yang login tercatat di kolom audit (`txtInsertedBy`/`txtUpdatedBy`) dan di setiap baris log.
 - Skenario B dari dua tab: login sebagai `admin` di satu tab dan `admin2` di tab lain, ubah order yang sama —
   yang kedua mendapat 409, dan detail order menunjukkan siapa yang menang.
-- Setiap error menampilkan `correlationId` yang bisa langsung dicari di log server.
+- Setiap error (validasi, 401/403/404/409/422, jaringan, maupun error JavaScript tak terduga) tampil sebagai **toast**
+  berisi judul, `errorCode`, detail, daftar field yang salah, dan `correlationId` yang bisa langsung dicari di log server.
 - Endpoint pendukung demo (`POST /api/demo/reset`, `PUT /api/demo/products/{id}/stock`) **hanya ada di environment Development** dan hanya untuk Admin.
 
 ### 1.2 Login & Hak Akses
