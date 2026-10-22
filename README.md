@@ -435,6 +435,10 @@ Untuk order identik yang dikirim dengan key **berbeda** (client membuat key baru
 
 ## 7. Race Condition Lain yang Ditangani
 
+Di luar Skenario A/B/C, berikut race condition yang diidentifikasi dan dicegah. Untuk #1 dan #8 tersedia branch
+`demo/race-conditions-unfixed` yang sengaja membuang perbaikannya — test-nya gagal di sana dan lulus di `main`
+(panduan: `DEMO-RACE-CONDITIONS.md` di branch tersebut).
+
 | # | Race condition | Dampak bila tidak ditangani | Pencegahan | Test |
 |---|---|---|---|---|
 | 1 | **Double cancel bersamaan** (dua admin / double click tombol cancel) | Stock dikembalikan dua kali → stock "bertambah" palsu | Stock hanya di-restore bila *compare-and-swap* status berhasil (1 row affected), dalam transaksi yang sama | `Concurrent_cancels_restore_stock_only_once` |
@@ -555,6 +559,8 @@ produk nonaktif/terhapus, CRUD produk, format error 400/404/409/422 dan correlat
 **Bukti test menangkap bug:** branch `demo/broken-stock` mengganti atomic UPDATE dengan pola baca → cek → tulis.
 Di branch itu `ScenarioA_two_orders…` gagal (2 order sukses dari stock 15) dan `ScenarioA_under_heavy_contention…`
 gagal (40 order sukses dari stock 15); di `main` keduanya lulus. Lihat `DEMO-BROKEN-STOCK.md` di branch tersebut.
+Dengan cara yang sama, branch `demo/race-conditions-unfixed` membuang perbaikan race condition #1 (double cancel → stock
+190 alih-alih 100) dan #8 (lost update pada atur stock → 25 pengurangan sukses dari stock 10).
 
 **Duplikat isi** ([`DuplicateOrderTests`](tests/OrderManagement.IntegrationTests/DuplicateOrderTests.cs)): order identik dengan key
 baru ditahan `409` lalu bisa dikonfirmasi, retry dengan key sama + konfirmasi berhasil, isi/customer berbeda dan order
